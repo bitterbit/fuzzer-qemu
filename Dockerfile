@@ -24,3 +24,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN apt install curl -y
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y 
 ENV PATH="${HOME}/.cargo/bin:${PATH}"
+
+ADD bin /fuzz/bin
+ADD system /system
+ADD samples /fuzz/samples

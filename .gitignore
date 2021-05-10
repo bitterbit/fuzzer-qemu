@@ -1,5 +1,5 @@
 .DS_Store
 bin/
-src/target
+*/target
 system/
 samples/

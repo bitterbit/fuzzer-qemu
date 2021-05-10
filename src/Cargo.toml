@@ -7,3 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+shared_memory = { git = 'https://github.com/elast0ny/shared_memory-rs' }
+rand = "0.8.3"
+pretty-hex = "0.2.1"
+libc = "0.2.94"

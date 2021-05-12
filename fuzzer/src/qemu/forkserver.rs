@@ -16,12 +16,14 @@ use crate::qemu::{
     outfile::OutFile,
 };
 
-use log::{debug, info};
+use log::{debug, info, log_enabled, Level};
+use hexdump;
 
 
 // taken from qemuafl/imported/config.h
 const FORKSRV_FD: i32 = 198;
 // const MAP_SIZE: usize = 1 << 16;
+const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000b848";
 
 pub struct Forkserver {
     status_pipe: Pipe,
@@ -50,18 +52,23 @@ impl Forkserver {
         let qemuafl = "/AFLplusplus/qemu_mode/qemuafl/build/aarch64-linux-user/qemu-aarch64";
 
 
+        let mut stdout = Stdio::null();
+        let mut stderr= Stdio::null();
+        if log_enabled!(Level::Debug) {
+            stdout = Stdio::inherit();
+            stderr = Stdio::inherit();
+        }
+
         let child = Command::new(qemuafl)
             .arg(target)
             .args(args)
             .stdin(Stdio::null())
-            // .stdout(Stdio::inherit())
-            // .stderr(Stdio::inherit())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
             .env("QEMU_SET_ENV", &format!("LD_LIBRARY_PATH={}", ld_library_path))
             // .env("AFL_DEBUG", "1")
-            .env("AFL_QEMU_PERSISTENT_GPR", "1")
-            .env("AFL_QEMU_PERSISTENT_ADDR", "0x550000b744") // 0x5500000000 + $(nm --dynamic | grep main)
+            .env("AFL_QEMU_PERSISTENT_GPR", "1") // TODO make this configurable by api
+            .env("AFL_QEMU_PERSISTENT_ADDR", AFL_QEMU_PERSISTENT_ADDR) // 0x5500000000 + $(nm --dynamic | grep main)
             // .env("AFL_QEMU_PERSISTENT_CNT", "100")
             .spawn().expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
         
@@ -113,7 +120,7 @@ where
         let mut args = Vec::<String>::new();
 
         let out_filename = format!("out-{}", 123456789); //TODO: replace it with a random number
-        let out_file = OutFile::new(&out_filename);
+        let out_file = OutFile::new(&out_filename, 2048);
 
 
         for item in argv {
@@ -190,6 +197,12 @@ where
     fn pre_exec<EM, S>(&mut self,_state: &mut S,_event_mgr: &mut EM, input: &I)-> Result<(), Error> {
         debug!("[-] pre exec");
         self.out_file.write_buf(&input.target_bytes().as_slice().to_vec());
+
+        if log_enabled!(Level::Debug) {
+            // hexdump::hexdump(&input.target_bytes().as_slice());
+            // hexdump::hexdump(std::fs::read("./out-123456789").unwrap().as_slice());
+        }
+
         Ok(())
     }
 

@@ -4,35 +4,41 @@ use libafl::{
     bolts::tuples::tuple_list,
     corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
     events::SimpleEventManager,
+    executors::{inprocess::InProcessExecutor, ExitKind},
     feedbacks::{CrashFeedback, MaxMapFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
-    stages::mutational::StdMutationalStage,
     observers::StdMapObserver,
+    stages::mutational::StdMutationalStage,
     state::State,
     stats::SimpleStats,
     utils::{current_nanos, StdRand},
 };
 
-mod pipe;
-mod forkserver;
-
-use forkserver::ForkserverExecutor;
-
-// TODO remove
+// Coverage map with explicit assignments due to the lack of instrumentation
 static mut SIGNALS: [u8; 16] = [0; 16];
 
-// TODO
-// 1. observe shared memory - using StdMapObserver::new_from_ptr
-// 2. run full harness in snapshots
-// 3. update inputs between iterations
-// 4. generator to use pre-made corpus using 
-//      state.load_initial_inputs(executor, manager,scheduler, corpus_dir)
-// 5. FuzzerExecutor to accept env, args and bin (should it take also shared mem? or should it
-//    create it?)
+fn signals_set(idx: usize) {
+    unsafe { SIGNALS[idx] = 1 };
+}
 
 pub fn main() {
+    // The closure that we want to fuzz
+    let mut harness = |buf: &[u8]| {
+        signals_set(0);
+        if buf.len() > 0 && buf[0] == 'a' as u8 {
+            signals_set(1);
+            if buf.len() > 1 && buf[1] == 'b' as u8 {
+                signals_set(2);
+                if buf.len() > 2 && buf[2] == 'c' as u8 {
+                    panic!("=)");
+                }
+            }
+        }
+        ExitKind::Ok
+    };
+
     // The Stats trait define how the fuzzer stats are reported to the user
     let stats = SimpleStats::new(|s| println!("{}", s));
 
@@ -69,22 +75,15 @@ pub fn main() {
     // A queue policy to get testcasess from the corpus
     let scheduler = QueueCorpusScheduler::new();
 
-    let mut executor = ForkserverExecutor::new(
-        "/fuzz/bin/harness", 
-        Vec::new(), 
-        tuple_list!(observer)
-    ).expect("Failed to create the Executor".into());
-        
-
     // Create the executor for an in-process function with just one observer
-    // let mut executor = InProcessExecutor::new(
-    //     "in-process(signals)",
-    //     &mut harness,
-    //     tuple_list!(observer),
-    //     &mut state,
-    //     &mut mgr,
-    // )
-    // .expect("Failed to create the Executor".into());
+    let mut executor = InProcessExecutor::new(
+        "in-process(signals)",
+        &mut harness,
+        tuple_list!(observer),
+        &mut state,
+        &mut mgr,
+    )
+    .expect("Failed to create the Executor".into());
 
     // Generator of printable bytearrays of max size 32
     let mut generator = RandPrintablesGenerator::new(32);
@@ -98,4 +97,3 @@ pub fn main() {
         .fuzz_loop(&mut state, &mut executor, &mut mgr, &scheduler)
         .expect("Error in the fuzzing loop".into());
 }
-

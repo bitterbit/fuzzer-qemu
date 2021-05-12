@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use libafl::{Error, bolts::{ownedref::{OwnedArrayPtrMut, OwnedPtr}, tuples::Named}, observers::{Observer, MapObserver}};
-use libafl::bolts::shmem::{
-    ShMemProvider, StdShMemProvider, ShMem
+use libafl::bolts::shmem::{ShMem, ShMemProvider, StdShMemProvider};
+use libafl::{
+    bolts::{ownedref::OwnedArrayPtrMut, tuples::Named},
+    observers::{MapObserver, Observer},
+    Error,
 };
-
-
-
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(bound = "T: serde::de::DeserializeOwned")]
@@ -76,12 +75,15 @@ where
 {
     /// Creates a new MapObserver
     pub fn new(name: &'static str, env_shmem_key: &str, map_size: usize) -> Self {
-
-        let mut shmem = StdShMemProvider::new().unwrap()
-            .new_map(map_size).expect("Error creating shared memory");
+        let mut shmem = StdShMemProvider::new()
+            .unwrap()
+            .new_map(map_size)
+            .expect("Error creating shared memory");
 
         assert!(shmem.len() <= map_size);
-        shmem.write_to_env(env_shmem_key).expect("Error while exporting shared memory to environment variable");
+        shmem
+            .write_to_env(env_shmem_key)
+            .expect("Error while exporting shared memory to environment variable");
 
         let ptr: *mut T = shmem.map_mut().as_mut_ptr() as *mut T;
 

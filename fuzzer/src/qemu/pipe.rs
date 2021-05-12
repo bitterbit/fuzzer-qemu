@@ -1,9 +1,8 @@
 use libc;
-use std::{io::Write, os::raw::c_int};
-
+use std::os::raw::c_int;
 use std::{
     fs::File,
-    io::{self, Read},
+    io::Read,
     os::unix::io::FromRawFd,
 };
 

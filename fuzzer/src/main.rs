@@ -15,13 +15,13 @@ use libafl::{
     utils::{current_nanos, StdRand},
 };
 
-mod pipe;
-mod forkserver;
-mod observer;
+mod qemu;
 
-use forkserver::ForkserverExecutor;
+use qemu::{
+    forkserver::ForkserverExecutor,
+    observer::SharedMemObserver,
+};
 
-use crate::observer::SharedMemObserver;
 
 const MAP_SIZE: usize = 1 << 16;
 
@@ -35,6 +35,8 @@ const MAP_SIZE: usize = 1 << 16;
 //    create it?)
 
 pub fn main() {
+    env_logger::init();
+
     // The Stats trait define how the fuzzer stats are reported to the user
     let stats = SimpleStats::new(|s| println!("{}", s));
 
@@ -44,14 +46,16 @@ pub fn main() {
 
     let observer: SharedMemObserver<u8> = SharedMemObserver::new("coverage", "__AFL_SHM_ID", MAP_SIZE);
 
+    let feedback = MaxMapFeedback::new_with_observer(&observer);
+
     // create a State from scratch
     let mut state = State::new(
         // RNG
         StdRand::with_seed(current_nanos()),
         // Corpus that will be evolved, we keep it in memory for performance
-        InMemoryCorpus::new(),
+        OnDiskCorpus::new(PathBuf::from("./queue")).unwrap(),
         // Feedbacks to rate the interestingness of an input
-        tuple_list!(MaxMapFeedback::new_with_observer(&observer)),
+        tuple_list!(feedback),
         // Corpus in which we store solutions (crashes in this example),
         // on disk so the user can get them after stopping the fuzzer
         OnDiskCorpus::new(PathBuf::from("./crashes")).unwrap(),
@@ -71,7 +75,7 @@ pub fn main() {
 
     let mut executor = ForkserverExecutor::new(
         "/fuzz/bin/harness", 
-        vec!["/fuzz/samples/sample"],
+        vec!["@@"],
         tuple_list!(observer)
     ).expect("Failed to create the Executor".into());
         

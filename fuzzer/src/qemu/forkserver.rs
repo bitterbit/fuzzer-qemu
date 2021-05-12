@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 use std::process::Command;
 use std::process::Stdio;
 
-use libafl::bolts::shmem::{ShMemProvider, StdShMemProvider, ShMem};
+// use libafl::bolts::shmem::{ShMemProvider, StdShMemProvider, ShMem};
 use libafl::bolts::tuples::Named;
 use libafl::{
     executors::{Executor, ExitKind, HasObservers},
@@ -11,12 +11,17 @@ use libafl::{
     Error,
 }; 
 
-// use std::sync::Arc;
-use crate::pipe::Pipe;
+use crate::qemu::{
+    pipe::Pipe,
+    outfile::OutFile,
+};
+
+use log::{debug, info};
+
 
 // taken from qemuafl/imported/config.h
 const FORKSRV_FD: i32 = 198;
-const MAP_SIZE: usize = 1 << 16;
+// const MAP_SIZE: usize = 1 << 16;
 
 pub struct Forkserver {
     status_pipe: Pipe,
@@ -28,7 +33,6 @@ pub struct Forkserver {
 
 impl Forkserver {
     pub fn new(target: String, args: Vec<String>) -> Self {
-
         // NAME | Who | R/W   | ID
         // -------------------------
         // CTL  | AFL | Read  | 198 
@@ -55,7 +59,7 @@ impl Forkserver {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .env("QEMU_SET_ENV", &format!("LD_LIBRARY_PATH={}", ld_library_path))
-            .env("AFL_DEBUG", "1")
+            // .env("AFL_DEBUG", "1")
             .env("AFL_QEMU_PERSISTENT_GPR", "1")
             .env("AFL_QEMU_PERSISTENT_ADDR", "0x550000b744") // 0x5500000000 + $(nm --dynamic | grep main)
             // .env("AFL_QEMU_PERSISTENT_CNT", "100")
@@ -81,7 +85,7 @@ impl Forkserver {
     pub fn start(&self) {
         // initial handshake
         self.status_pipe.read_i32();
-        // println!("[+] forkserver is alive!");
+        info!("[+] forkserver is alive!");
     }
 }
 
@@ -93,7 +97,7 @@ where
     target: String,
     args: Vec<String>,
     // use_stdin: bool,
-    // out_file: OutFile,
+    out_file: OutFile,
     forkserver: Forkserver,
     observers: OT,
     phantom: PhantomData<I>,
@@ -108,7 +112,16 @@ where
         let target = bin.to_string();
         let mut args = Vec::<String>::new();
 
+        let out_filename = format!("out-{}", 123456789); //TODO: replace it with a random number
+        let out_file = OutFile::new(&out_filename);
+
+
         for item in argv {
+            if item == "@@" {
+                args.push(out_filename.clone());
+                continue;
+            }
+
             args.push(item.to_owned());
         }
 
@@ -118,6 +131,7 @@ where
         return Ok(Self {
             target,
             args,
+            out_file,
             forkserver,
             observers,
             phantom: PhantomData,
@@ -157,24 +171,25 @@ where
         let forkserver = &mut self.forkserver;
 
         forkserver.control_pipe.write_i32(0);
-        // println!("[+] sent alive signal to child");
+        debug!("[+] sent alive signal to child");
 
         forkserver.child_pid = forkserver.status_pipe.read_i32();
-        // println!("[+] child pid {}", forkserver.child_pid);
+        debug!("[+] child pid {}", forkserver.child_pid);
 
         if forkserver.child_pid < 0 {
             panic!("forkserver is misbehaving");
         }
 
         forkserver.status = forkserver.status_pipe.read_i32();
-        // println!("[+] status={}", forkserver.status);
+        debug!("[+] status={}", forkserver.status);
 
         Ok(ExitKind::Ok)
     }
 
     #[inline]
-    fn pre_exec<EM, S>(&mut self,_state: &mut S,_event_mgr: &mut EM,_input: &I)-> Result<(), Error> {
-        // println!("pre exec hook!");
+    fn pre_exec<EM, S>(&mut self,_state: &mut S,_event_mgr: &mut EM, input: &I)-> Result<(), Error> {
+        debug!("[-] pre exec");
+        self.out_file.write_buf(&input.target_bytes().as_slice().to_vec());
         Ok(())
     }
 
@@ -184,13 +199,13 @@ where
         }
 
         //move the head back
-        // self.out_file.rewind();
+        self.out_file.rewind();
 
         if libc::WIFSIGNALED(self.forkserver.status()) {
-            println!("CRASH");
+            info!("CRASH");
         }
 
-        // println!("OK");
+        debug!("[-] post exec");
         Ok(())
     }
 }

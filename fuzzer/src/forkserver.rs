@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 use std::process::Command;
 use std::process::Stdio;
 
-// use libafl::bolts::shmem::{ShMemProvider, StdShMemProvider, ShMem};
+use libafl::bolts::shmem::{ShMemProvider, StdShMemProvider, ShMem};
 use libafl::bolts::tuples::Named;
 use libafl::{
     executors::{Executor, ExitKind, HasObservers},
@@ -27,7 +27,8 @@ pub struct Forkserver {
 }
 
 impl Forkserver {
-    pub fn new() -> Self {
+    pub fn new(target: String, args: Vec<String>) -> Self {
+
         // NAME | Who | R/W   | ID
         // -------------------------
         // CTL  | AFL | Read  | 198 
@@ -44,22 +45,21 @@ impl Forkserver {
         let ld_library_path = "/fuzz/bin/arm64-v8a";
         let qemuafl = "/AFLplusplus/qemu_mode/qemuafl/build/aarch64-linux-user/qemu-aarch64";
 
+
         let child = Command::new(qemuafl)
-            .arg("/fuzz/bin/harness")
-            .arg("/fuzz/samples/sample")
-            // .arg("--backtrace")
-            .env("QEMU_SET_ENV", format!("LD_LIBRARY_PATH={}", ld_library_path))
+            .arg(target)
+            .args(args)
+            .stdin(Stdio::null())
+            // .stdout(Stdio::inherit())
+            // .stderr(Stdio::inherit())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .env("QEMU_SET_ENV", &format!("LD_LIBRARY_PATH={}", ld_library_path))
             .env("AFL_DEBUG", "1")
             .env("AFL_QEMU_PERSISTENT_GPR", "1")
             .env("AFL_QEMU_PERSISTENT_ADDR", "0x550000b744") // 0x5500000000 + $(nm --dynamic | grep main)
             // .env("AFL_QEMU_PERSISTENT_CNT", "100")
-            // .env("__AFL_SHM_ID", format!("{}", shm_id))
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
             .spawn().expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
-
-        // TODO close unused pipe ends
         
         Self {
             control_pipe,
@@ -81,7 +81,7 @@ impl Forkserver {
     pub fn start(&self) {
         // initial handshake
         self.status_pipe.read_i32();
-        println!("[+] forkserver is alive!");
+        // println!("[+] forkserver is alive!");
     }
 }
 
@@ -112,7 +112,7 @@ where
             args.push(item.to_owned());
         }
 
-        let forkserver = Forkserver::new(); // Forkserver::new(target.clone(), args.clone(), out_file.as_raw_fd(), use_stdin, 0);
+        let forkserver = Forkserver::new(target.clone(), args.clone()); // Forkserver::new(target.clone(), args.clone(), out_file.as_raw_fd(), use_stdin, 0);
         forkserver.start();
         
         return Ok(Self {
@@ -157,24 +157,24 @@ where
         let forkserver = &mut self.forkserver;
 
         forkserver.control_pipe.write_i32(0);
-        println!("[+] sent alive signal to child");
+        // println!("[+] sent alive signal to child");
 
         forkserver.child_pid = forkserver.status_pipe.read_i32();
-        println!("[+] child pid {}", forkserver.child_pid);
+        // println!("[+] child pid {}", forkserver.child_pid);
 
         if forkserver.child_pid < 0 {
             panic!("forkserver is misbehaving");
         }
 
         forkserver.status = forkserver.status_pipe.read_i32();
-        println!("[+] status={}", forkserver.status);
+        // println!("[+] status={}", forkserver.status);
 
         Ok(ExitKind::Ok)
     }
 
     #[inline]
     fn pre_exec<EM, S>(&mut self,_state: &mut S,_event_mgr: &mut EM,_input: &I)-> Result<(), Error> {
-        println!("pre exec hook!");
+        // println!("pre exec hook!");
         Ok(())
     }
 
@@ -190,7 +190,7 @@ where
             println!("CRASH");
         }
 
-        println!("OK");
+        // println!("OK");
         Ok(())
     }
 }

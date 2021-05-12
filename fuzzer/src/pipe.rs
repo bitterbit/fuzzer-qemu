@@ -29,7 +29,7 @@ impl Pipe {
     }
 
     pub fn write_i32(&self, value: i32) -> isize {
-        println!("[+] write to [{} fd={}]", self.name, self.write_end);
+        // println!("[+] write to [{} fd={}]", self.name, self.write_end);
         let v: i32 = value; // store a copy
         let rlen = unsafe {
             libc::write(
@@ -39,7 +39,7 @@ impl Pipe {
             )
         };
 
-        println!("[+] done write");
+        // println!("[+] done write");
 
         return rlen;
     }
@@ -60,7 +60,7 @@ impl Pipe {
     }
 
     pub fn read(&self, buf: &mut[u8]) {
-        println!("read from fd={}", self.read_end);
+        // println!("read from fd={}", self.read_end);
         unsafe {
             let mut f: File = File::from_raw_fd(self.read_end);
             f.read_exact(buf).expect("Could not read from pipe");

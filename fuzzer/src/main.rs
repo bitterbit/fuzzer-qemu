@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use libafl::bolts::shmem::{ShMemProvider, StdShMemProvider, ShMem};
 
 use libafl::{
     bolts::tuples::tuple_list,
@@ -9,7 +10,6 @@ use libafl::{
     generators::RandPrintablesGenerator,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     stages::mutational::StdMutationalStage,
-    observers::StdMapObserver,
     state::State,
     stats::SimpleStats,
     utils::{current_nanos, StdRand},
@@ -17,11 +17,13 @@ use libafl::{
 
 mod pipe;
 mod forkserver;
+mod observer;
 
 use forkserver::ForkserverExecutor;
 
-// TODO remove
-static mut SIGNALS: [u8; 16] = [0; 16];
+use crate::observer::SharedMemObserver;
+
+const MAP_SIZE: usize = 1 << 16;
 
 // TODO
 // 1. observe shared memory - using StdMapObserver::new_from_ptr
@@ -40,9 +42,7 @@ pub fn main() {
     // such as the notification of the addition of a new item to the corpus
     let mut mgr = SimpleEventManager::new(stats);
 
-    // Create an observation channel using the siganls map
-    let observer =
-        StdMapObserver::new("signals", unsafe { &mut SIGNALS }, unsafe { SIGNALS.len() });
+    let observer: SharedMemObserver<u8> = SharedMemObserver::new("coverage", "__AFL_SHM_ID", MAP_SIZE);
 
     // create a State from scratch
     let mut state = State::new(
@@ -71,20 +71,10 @@ pub fn main() {
 
     let mut executor = ForkserverExecutor::new(
         "/fuzz/bin/harness", 
-        Vec::new(), 
+        vec!["/fuzz/samples/sample"],
         tuple_list!(observer)
     ).expect("Failed to create the Executor".into());
         
-
-    // Create the executor for an in-process function with just one observer
-    // let mut executor = InProcessExecutor::new(
-    //     "in-process(signals)",
-    //     &mut harness,
-    //     tuple_list!(observer),
-    //     &mut state,
-    //     &mut mgr,
-    // )
-    // .expect("Failed to create the Executor".into());
 
     // Generator of printable bytearrays of max size 32
     let mut generator = RandPrintablesGenerator::new(32);

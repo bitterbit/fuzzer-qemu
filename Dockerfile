@@ -11,7 +11,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 ENV debian_frontend noninteractive
 RUN debian_frontend=noninteractive apt-get install \
     make git cmake clang python3 python3-pip wget ninja-build \
-    libtool libtool-bin automake autoconf bison flex curl \
+    libtool libtool-bin automake autoconf bison flex curl psmisc \
     pkg-config libglib2.0-dev libpixman-1-dev vim gnuplot -y
 
 RUN git clone https://github.com/AFLplusplus/AFLplusplus --branch 3.12c 

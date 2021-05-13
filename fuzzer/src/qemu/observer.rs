@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use std::{collections::HashMap, fmt::{Debug, Display}};
+use log::debug;
+
 use libafl::{bolts::shmem::{ShMem, ShMemProvider, StdShMemProvider}, executors::HasExecHooks};
 use libafl::{
     bolts::{ownedref::OwnedArrayPtrMut, tuples::Named},
@@ -28,7 +31,7 @@ where
 
 impl<EM, I, S, T, Z> HasExecHooks<EM, I, S, Z> for SharedMemObserver<T>
 where
-    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned,
+    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned + Debug + Display + Eq,
     Self: MapObserver<T>,
 {
     #[inline]
@@ -39,7 +42,28 @@ where
         _mgr: &mut EM,
         _input: &I,
     ) -> Result<(), Error> {
-        self.reset_map()
+
+        let mut index: usize = 0;
+        let mut coverage: HashMap<usize, T> = HashMap::new();
+
+        let initial = self.initial();
+        let cnt = self.usable_count();
+        for i in self.map_mut()[0..cnt].iter_mut() {
+            if *i != initial {
+                coverage.insert(index, *i);
+            }
+            *i = initial;
+
+            index+=1;
+        }
+
+
+        // debug!("coverage! {:?}", coverage);
+        debug!("coverage! edges {:?}", coverage.keys().count());
+
+
+        // self.reset_map()
+        Ok(())
     }
 }
 
@@ -85,7 +109,7 @@ where
 
 impl<T> SharedMemObserver<T>
 where
-    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned,
+    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned + Debug + Display + Eq
 {
     /// Creates a new MapObserver
     pub fn new(name: &'static str, env_shmem_key: &str, map_size: usize) -> Self {

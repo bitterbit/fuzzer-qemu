@@ -74,6 +74,7 @@ impl Forkserver {
             // .env("AFL_DEBUG", "1")
             .env("AFL_QEMU_PERSISTENT_GPR", "1") // TODO make this configurable by api
             .env("AFL_QEMU_PERSISTENT_ADDR", AFL_QEMU_PERSISTENT_ADDR) // 0x5500000000 + $(nm --dynamic | grep main)
+            .env("AFL_INST_LIBS", "1")
             // .env("AFL_QEMU_PERSISTENT_CNT", "100")
             .spawn()
             .expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process

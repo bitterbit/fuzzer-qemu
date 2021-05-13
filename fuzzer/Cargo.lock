@@ -283,8 +283,6 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 [[package]]
 name = "libafl"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a523dbcde9084d186ed954e92319143114af9e089ef36e4648f2238cfc0ca4a"
 dependencies = [
  "compression",
  "ctor",
@@ -311,8 +309,6 @@ dependencies = [
 [[package]]
 name = "libafl_derive"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e6cae99f5cbba1bd871b5a2cc52804f454d5e83b4f35894a9ee3549df077752"
 dependencies = [
  "quote",
  "syn",

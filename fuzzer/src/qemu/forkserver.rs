@@ -1,24 +1,27 @@
-use core::marker::PhantomData; 
+use core::marker::PhantomData;
 use std::process::Command;
 use std::process::Stdio;
 
 // use libafl::bolts::shmem::{ShMemProvider, StdShMemProvider, ShMem};
 use libafl::bolts::tuples::Named;
 use libafl::{
-    executors::{Executor, ExitKind, HasObservers},
+    corpus::Corpus,
+    events::{EventFirer, EventRestarter},
+    executors::{
+        Executor, ExitKind, HasExecHooks, HasExecHooksTuple, HasObservers, HasObserversHooks,
+    },
+    feedbacks::Feedback,
+    fuzzer::HasObjective,
     inputs::{HasTargetBytes, Input},
     observers::ObserversTuple,
+    state::HasSolutions,
     Error,
-}; 
-
-use crate::qemu::{
-    pipe::Pipe,
-    outfile::OutFile,
 };
 
-use log::{debug, info, log_enabled, Level};
-use hexdump;
+use crate::qemu::{outfile::OutFile, pipe::Pipe};
 
+use hexdump;
+use log::{debug, info, log_enabled, Level};
 
 // taken from qemuafl/imported/config.h
 const FORKSRV_FD: i32 = 198;
@@ -28,7 +31,7 @@ const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000b848";
 pub struct Forkserver {
     status_pipe: Pipe,
     control_pipe: Pipe,
-    pid: u32, // pid of forkserver. this is the father which children will fork from
+    pid: u32,       // pid of forkserver. this is the father which children will fork from
     child_pid: i32, // pid of fuzzed program (our grand child)
     status: i32,
 }
@@ -37,13 +40,13 @@ impl Forkserver {
     pub fn new(target: String, args: Vec<String>) -> Self {
         // NAME | Who | R/W   | ID
         // -------------------------
-        // CTL  | AFL | Read  | 198 
+        // CTL  | AFL | Read  | 198
         // CTL  | Us  | Write | Anon
         // ST   | AFL | Write | 199
         // ST   | Us  | Read  | Anon
         let control_pipe = Pipe::new("control_pipe".to_owned());
         let status_pipe = Pipe::new("status_pipe".to_owned());
-        
+
         // pass down to afl CTL:read and ST:write
         control_pipe.dup_read(FORKSRV_FD);
         status_pipe.dup_write(FORKSRV_FD + 1);
@@ -51,9 +54,8 @@ impl Forkserver {
         let ld_library_path = "/fuzz/bin/arm64-v8a";
         let qemuafl = "/AFLplusplus/qemu_mode/qemuafl/build/aarch64-linux-user/qemu-aarch64";
 
-
         let mut stdout = Stdio::null();
-        let mut stderr= Stdio::null();
+        let mut stderr = Stdio::null();
         if log_enabled!(Level::Debug) {
             stdout = Stdio::inherit();
             stderr = Stdio::inherit();
@@ -65,13 +67,17 @@ impl Forkserver {
             .stdin(Stdio::null())
             .stdout(stdout)
             .stderr(stderr)
-            .env("QEMU_SET_ENV", &format!("LD_LIBRARY_PATH={}", ld_library_path))
+            .env(
+                "QEMU_SET_ENV",
+                &format!("LD_LIBRARY_PATH={}", ld_library_path),
+            )
             // .env("AFL_DEBUG", "1")
             .env("AFL_QEMU_PERSISTENT_GPR", "1") // TODO make this configurable by api
             .env("AFL_QEMU_PERSISTENT_ADDR", AFL_QEMU_PERSISTENT_ADDR) // 0x5500000000 + $(nm --dynamic | grep main)
             // .env("AFL_QEMU_PERSISTENT_CNT", "100")
-            .spawn().expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
-        
+            .spawn()
+            .expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
+
         Self {
             control_pipe,
             status_pipe,
@@ -81,11 +87,11 @@ impl Forkserver {
         }
     }
 
-    pub fn pid(&self) -> u32{
+    pub fn pid(&self) -> u32 {
         self.pid
     }
 
-    pub fn status(&self) -> i32{
+    pub fn status(&self) -> i32 {
         self.status
     }
 
@@ -96,7 +102,7 @@ impl Forkserver {
     }
 }
 
-pub struct ForkserverExecutor<I, OT>
+pub struct ForkserverExecutor<EM, I, OT, S>
 where
     I: Input + HasTargetBytes,
     OT: ObserversTuple,
@@ -107,21 +113,34 @@ where
     out_file: OutFile,
     forkserver: Forkserver,
     observers: OT,
-    phantom: PhantomData<I>,
+    phantom: PhantomData<(EM, I, S)>,
 }
 
-impl<I, OT> ForkserverExecutor<I, OT>
+impl<EM, I, OT, S> ForkserverExecutor<EM, I, OT, S>
 where
     I: Input + HasTargetBytes,
     OT: ObserversTuple,
 {
-    pub fn new(bin: &'static str, argv: Vec<&'static str>, observers: OT) -> Result<Self, Error> {
+    pub fn new<OC, OF, Z>(
+        bin: &'static str,
+        argv: Vec<&'static str>,
+        observers: OT,
+        _fuzzer: &mut Z,
+        _state: &mut S,
+        _event_mgr: &mut EM,
+    ) -> Result<Self, Error>
+    where
+        EM: EventFirer<I, S> + EventRestarter<S>,
+        OC: Corpus<I>,
+        OF: Feedback<I, S>,
+        S: HasSolutions<OC, I>,
+        Z: HasObjective<I, OF, S>,
+    {
         let target = bin.to_string();
         let mut args = Vec::<String>::new();
 
         let out_filename = format!("out-{}", 123456789); //TODO: replace it with a random number
         let out_file = OutFile::new(&out_filename, 2048);
-
 
         for item in argv {
             if item == "@@" {
@@ -134,7 +153,7 @@ where
 
         let forkserver = Forkserver::new(target.clone(), args.clone()); // Forkserver::new(target.clone(), args.clone(), out_file.as_raw_fd(), use_stdin, 0);
         forkserver.start();
-        
+
         return Ok(Self {
             target,
             args,
@@ -149,26 +168,16 @@ where
         &self.target
     }
 
-    pub fn args(&self) -> &Vec<String>{
+    pub fn args(&self) -> &Vec<String> {
         &self.args
     }
 
-    pub fn forkserver(&self) -> &Forkserver{
+    pub fn forkserver(&self) -> &Forkserver {
         &self.forkserver
     }
 }
 
-impl<I, OT> Named for ForkserverExecutor<I, OT> 
-where
-    I: Input + HasTargetBytes,
-    OT: ObserversTuple,
-{
-    fn name(&self) -> &str {
-        return "fork server executor!";
-    }
-}
-
-impl<I, OT> Executor<I> for ForkserverExecutor <I, OT>
+impl<EM, I, OT, S> Executor<I> for ForkserverExecutor<EM, I, OT, S>
 where
     I: Input + HasTargetBytes,
     OT: ObserversTuple,
@@ -192,22 +201,40 @@ where
 
         Ok(ExitKind::Ok)
     }
+}
 
+impl<EM, I, OT, S, Z> HasExecHooks<EM, I, S, Z> for ForkserverExecutor<EM, I, OT, S>
+where
+    I: Input + HasTargetBytes,
+    OT: ObserversTuple,
+{
     #[inline]
-    fn pre_exec<EM, S>(&mut self,_state: &mut S,_event_mgr: &mut EM, input: &I)-> Result<(), Error> {
-        debug!("[-] pre exec");
-        self.out_file.write_buf(&input.target_bytes().as_slice().to_vec());
+    fn pre_exec(
+        &mut self,
+        fuzzer: &mut Z,
+        state: &mut S,
+        event_mgr: &mut EM,
+        input: &I,
+    ) -> Result<(), Error> {
 
-        if log_enabled!(Level::Debug) {
-            // hexdump::hexdump(&input.target_bytes().as_slice());
-            // hexdump::hexdump(std::fs::read("./out-123456789").unwrap().as_slice());
-        }
+        debug!("[-] pre exec");
+
+        self.out_file
+            .write_buf(&input.target_bytes().as_slice().to_vec());
 
         Ok(())
     }
 
-    fn post_exec<EM, S>(&mut self, _state: &mut S, _event_mgr: &mut EM, _input: &I) -> Result<(), Error>{
-       if !libc::WIFSTOPPED(self.forkserver.status()) {
+    #[inline]
+    fn post_exec(
+        &mut self,
+        _fuzzer: &mut Z,
+        _state: &mut S,
+        _event_mgr: &mut EM,
+        _input: &I,
+    ) -> Result<(), Error> {
+
+        if !libc::WIFSTOPPED(self.forkserver.status()) {
             self.forkserver.child_pid = 0;
         }
 
@@ -223,7 +250,7 @@ where
     }
 }
 
-impl<I, OT> HasObservers<OT> for ForkserverExecutor<I, OT>
+impl<EM, I, OT, S> HasObservers<OT> for ForkserverExecutor<EM, I, OT, S>
 where
     I: Input + HasTargetBytes,
     OT: ObserversTuple,
@@ -237,4 +264,11 @@ where
     fn observers_mut(&mut self) -> &mut OT {
         &mut self.observers
     }
+}
+
+impl<EM, I, OT, S, Z> HasObserversHooks<EM, I, OT, S, Z> for ForkserverExecutor<EM, I, OT, S>
+where
+    I: Input + HasTargetBytes,
+    OT: ObserversTuple + HasExecHooksTuple<EM, I, S, Z>,
+{
 }

@@ -10,14 +10,14 @@ use libafl::{
     bolts::tuples::tuple_list,
     corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
     events::SimpleEventManager,
-    feedbacks::{CrashFeedback, FeedbacksTuple, MaxMapFeedback},
+    feedbacks::{CrashFeedback, MapFeedbackState, MaxMapFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     inputs::BytesInput,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     mutators::token_mutations::Tokens,
     observers::TimeObserver,
     stages::mutational::StdMutationalStage,
-    state::State,
+    state::StdState,
     stats::SimpleStats,
     utils::{current_nanos, StdRand},
 };
@@ -48,45 +48,49 @@ pub fn main() {
     // such as the notification of the addition of a new item to the corpus
     let mut mgr = SimpleEventManager::new(stats);
 
-    let coverage_observer: SharedMemObserver<u8> =
+    let cov_observer: SharedMemObserver<u8> =
         SharedMemObserver::new("coverage", "__AFL_SHM_ID", MAP_SIZE);
 
-    let coverage_feedback =
-        MaxMapFeedback::new_with_observer_track(&coverage_observer, true, false);
+    let covfeed_state = MapFeedbackState::with_observer(&cov_observer);
+    let covfeed = MaxMapFeedback::new(&covfeed_state, &cov_observer);
 
     // let temp_corpus : InMemoryCorpus<BytesInput> = InMemoryCorpus::new();
     let temp_corpus = OnDiskCorpus::new(PathBuf::from("./queue")).unwrap();
 
     // create a State from scratch
-    let mut state = State::new(
+    let mut state = StdState::new(
         // RNG
         StdRand::with_seed(current_nanos()),
         // Corpus that will be evolved, we keep it in memory for performance
         temp_corpus,
-        // Feedbacks to rate the interestingness of an input
-        tuple_list!(coverage_feedback),
         // Corpus in which we store solutions (crashes in this example),
         // on disk so the user can get them after stopping the fuzzer
         OnDiskCorpus::new(PathBuf::from("./crashes")).unwrap(),
         // Feedbacks to recognize an input as solution
-        tuple_list!(CrashFeedback::new()),
+        tuple_list!(covfeed_state),
     );
 
     // Setup a basic mutator with a mutational stage
     let mutator = StdScheduledMutator::new(havoc_mutations());
-    let stage = StdMutationalStage::new(mutator);
+    let mut stages = tuple_list!(StdMutationalStage::new(mutator));
 
-    // A fuzzer with just one stage
-    let mut fuzzer = StdFuzzer::new(tuple_list!(stage));
+    let objective = CrashFeedback::new();
 
     // A queue policy to get testcasess from the corpus
-    // let scheduler = QueueCorpusScheduler::new();
-    let minimizer_sched = IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
+    let scheduler = QueueCorpusScheduler::new();
+    // let mut minimizer_sched =
+    //     IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
+
+    // A fuzzer with just one stage
+    let mut fuzzer = StdFuzzer::new(scheduler, covfeed, objective);
 
     let mut executor = ForkserverExecutor::new(
         "/fuzz/bin/harness",
         vec!["@@"],
-        tuple_list!(coverage_observer),
+        tuple_list!(cov_observer),
+        &mut fuzzer,
+        &mut state,
+        &mut mgr,
     )
     .expect("Failed to create the Executor".into());
 
@@ -95,24 +99,18 @@ pub fn main() {
     // this should run all files in corpus folder and record coverage for them
     state
         .load_initial_inputs(
+            &mut fuzzer,
             &mut executor,
             &mut mgr,
-            &minimizer_sched,
             corpuses.as_slice(),
         )
         .expect("Failed to load initial corpus");
 
     debug!("[+] done loading initial corpus");
 
-    // let testcase = temp_corpus.get(0);
-    //
-    // scheduler ->
-    //  executor
-
-    // fuzzer.fuzz_one(&mut state, &mut executor, &mut mgr, &scheduler)
-    //     .expect("Error running fuzzer once");
+    fuzzer.fuzz_one(&mut stages, &mut executor, &mut state, &mut mgr).expect("Error in fuzzer");
 
     fuzzer
-        .fuzz_loop(&mut state, &mut executor, &mut mgr, &minimizer_sched)
+        .fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)
         .expect("Error in the fuzzing loop".into());
 }

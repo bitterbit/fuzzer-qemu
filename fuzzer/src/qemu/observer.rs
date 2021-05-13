@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use libafl::bolts::shmem::{ShMem, ShMemProvider, StdShMemProvider};
+use libafl::{bolts::shmem::{ShMem, ShMemProvider, StdShMemProvider}, executors::HasExecHooks};
 use libafl::{
     bolts::{ownedref::OwnedArrayPtrMut, tuples::Named},
     observers::{MapObserver, Observer},
@@ -23,8 +23,22 @@ impl<T> Observer for SharedMemObserver<T>
 where
     T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned,
 {
+}
+
+
+impl<EM, I, S, T, Z> HasExecHooks<EM, I, S, Z> for SharedMemObserver<T>
+where
+    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned,
+    Self: MapObserver<T>,
+{
     #[inline]
-    fn pre_exec(&mut self) -> Result<(), Error> {
+    fn pre_exec(
+        &mut self,
+        _fuzzer: &mut Z,
+        _state: &mut S,
+        _mgr: &mut EM,
+        _input: &I,
+    ) -> Result<(), Error> {
         self.reset_map()
     }
 }

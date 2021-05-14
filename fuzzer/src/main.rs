@@ -27,7 +27,17 @@ mod qemu;
 
 use qemu::{forkserver::ForkserverExecutor, observer::SharedMemObserver};
 
-const MAP_SIZE: usize = 1 << 16;
+// const MAP_SIZE: usize = 1 << 16;
+const MAP_SIZE: usize = 1 << 10;
+
+/***
+ * - [ ] make sure we can catch a crash
+ * - [V] what is taking most time? 
+ * - [ ] print out coverage stats
+ * - [ ] custom mutator
+ * - [V] try out smaller shmem size 
+ *  - [ ] make qumuafl respect map size from ENV
+ */
 
 pub fn main() {
     env_logger::init();
@@ -42,7 +52,7 @@ pub fn main() {
         SharedMemObserver::new("coverage", "__AFL_SHM_ID", MAP_SIZE);
 
     let covfeed_state = MapFeedbackState::with_observer(&cov_observer);
-    let covfeed = MaxMapFeedback::new(&covfeed_state, &cov_observer);
+    let covfeed = MaxMapFeedback::new_tracking(&covfeed_state, &cov_observer, true, false);
 
     let temp_corpus = OnDiskCorpus::new(PathBuf::from("./queue")).unwrap();
 
@@ -58,9 +68,9 @@ pub fn main() {
 
     let objective = CrashFeedback::new();
 
-    let scheduler = QueueCorpusScheduler::new();
-    // let mut minimizer_sched =
-    //     IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
+    // let scheduler = QueueCorpusScheduler::new();
+    let mut scheduler =
+        IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
 
     let mut fuzzer = StdFuzzer::new(scheduler, covfeed, objective);
 

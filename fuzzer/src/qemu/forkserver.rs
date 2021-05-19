@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 // taken from qemuafl/imported/config.h
 const FORKSRV_FD: i32 = 198;
 // const MAP_SIZE: usize = 1 << 16;
-const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000b848";
+const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000b97c";
 
 pub struct Forkserver {
     // don't use this member directly
@@ -39,7 +39,7 @@ pub struct Forkserver {
     pid: u32,       // pid of forkserver. this is the father which children will fork from
     child_pid: i32, // pid of fuzzed program (our grand child)
     status: i32,
-    is_child_alive: bool,
+    is_qemu_alive: bool,
 
     child_status_sender: Sender<i32>,
     child_status_receiver: Arc<Mutex<Receiver<i32>>>,
@@ -76,7 +76,7 @@ impl Forkserver {
             pid,
             child_pid: 0,
             status: 0,
-            is_child_alive: true,
+            is_qemu_alive: true,
             child_status_sender: sender,
             child_status_receiver: Arc::new(Mutex::new(receiver)),
         }
@@ -106,7 +106,7 @@ impl Forkserver {
             // .env("AFL_DEBUG", "1")
             .env("AFL_QEMU_PERSISTENT_GPR", "1") // TODO make this configurable by api
             .env("AFL_QEMU_PERSISTENT_ADDR", AFL_QEMU_PERSISTENT_ADDR) // 0x5500000000 + $(nm --dynamic | grep main)
-            .env("AFL_INST_LIBS", "1")
+            // .env("AFL_INST_LIBS", "1")
             // .env("AFL_QEMU_PERSISTENT_CNT", "100")
             .spawn()
             .expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
@@ -127,7 +127,7 @@ impl Forkserver {
         Forkserver::update_on_child_exit(child, self.child_status_sender.clone());
 
         self.pid = pid;
-        self.is_child_alive = true;
+        self.is_qemu_alive = true;
         self.status = 0;
     }
 
@@ -298,8 +298,12 @@ where
 
         if let Some(child_status) = forkserver.try_read_status() {
             debug!("[+] child status {}", child_status);
+            if child_status != 4991 {
+                info!("target crashed but QEMU is still alive. exit_code={}", child_status);
+                return Ok(ExitKind::Crash);
+            }
         } else {
-            forkserver.is_child_alive = false;
+            forkserver.is_qemu_alive = false;
             info!("[!] target crashed");
             return Ok(ExitKind::Crash);
         }
@@ -340,7 +344,7 @@ where
         //move the head back
         self.out_file.rewind();
 
-        if !self.forkserver().is_child_alive {
+        if !self.forkserver().is_qemu_alive {
             let target = self.target().clone();
             let args = self.args().clone();
 

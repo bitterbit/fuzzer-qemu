@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap, 
     fmt::{Debug, Display},
-    cmp,
 };
-use log::debug;
 
 use libafl::{
     events::{ 
@@ -91,7 +89,7 @@ where
         &mut self,
         _fuzzer: &mut Z,
         _state: &mut S,
-        mgr: &mut EM,
+        _mgr: &mut EM,
         _input: &I,
     ) -> Result<(), Error> {
 
@@ -157,6 +155,14 @@ where
             .expect("Error while exporting shared memory to environment variable");
 
         let ptr: *mut T = shmem.map_mut().as_mut_ptr() as *mut T;
+
+        // memset(shmem.ptr(), 0, shmem.len())
+        unsafe {
+            let u8_ptr : *mut u8 = ptr as *mut u8;
+            for i in 0..shmem.len() {
+                *u8_ptr.add(i) = 0;
+            }
+        }
 
         Self {
             name: name.to_string(),

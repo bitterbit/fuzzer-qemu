@@ -1,11 +1,6 @@
 use libc;
 use std::os::raw::c_int;
-use std::{
-    fs::File,
-    io::Read,
-    os::unix::io::FromRawFd,
-};
-use log::{debug, info, log_enabled, Level};
+use log::debug;
 
 #[derive(Debug, Clone)]
 pub struct Pipe {

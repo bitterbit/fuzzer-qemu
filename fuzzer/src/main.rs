@@ -1,21 +1,15 @@
-use libafl::{
-    bolts::shmem::{ShMem, ShMemProvider, StdShMemProvider},
-    corpus::IndexesLenTimeMinimizerCorpusScheduler,
-    feedbacks::{MapFeedback, MaxReducer, TimeFeedback, TimeoutFeedback},
-    utils::RomuTrioRand,
-};
 use std::path::PathBuf;
 
 use libafl::{
+    corpus::IndexesLenTimeMinimizerCorpusScheduler,
     bolts::tuples::tuple_list,
     corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
     events::SimpleEventManager,
     feedbacks::{CrashFeedback, MapFeedbackState, MaxMapFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
-    inputs::BytesInput,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
-    mutators::token_mutations::Tokens,
-    observers::TimeObserver,
+    // inputs::BytesInput,
+    // observers::TimeObserver,
     stages::mutational::StdMutationalStage,
     state::StdState,
     stats::SimpleStats,
@@ -31,7 +25,7 @@ const MAP_SIZE: usize = 1 << 16;
 // const MAP_SIZE: usize = 1 << 10;
 
 /***
- * - [ ] make sure we can catch a crash
+ * - [V] make sure we can catch a crash
  * - [V] print out coverage stats
  * - [ ] custom mutator
  * - [V] what is taking most time? 
@@ -83,7 +77,7 @@ pub fn main() {
     let objective = CrashFeedback::new();
 
     // let scheduler = QueueCorpusScheduler::new();
-    let mut scheduler =
+    let scheduler =
         IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
 
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);

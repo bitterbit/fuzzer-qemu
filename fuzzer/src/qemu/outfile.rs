@@ -1,7 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
     io::{prelude::*, SeekFrom},
-    os::unix::io::{AsRawFd, RawFd},
 };
 
 pub struct OutFile {

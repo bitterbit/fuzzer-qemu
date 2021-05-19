@@ -5,12 +5,14 @@ use std::{
     io::Read,
     os::unix::io::FromRawFd,
 };
+use log::{debug, info, log_enabled, Level};
 
 #[derive(Debug, Clone)]
 pub struct Pipe {
     read_end: c_int,
     write_end: c_int,
     name: String,
+    dups: Vec<c_int>,
 }
 
 impl Pipe {
@@ -20,15 +22,18 @@ impl Pipe {
         if ret < 0 {
             panic!("pipe() failed");
         }
+
+        debug!("[*] new pipe {} ({},{})", name, fds[0], fds[1]);
         Self {
             read_end: fds[0],
             write_end: fds[1],
             name,
+            dups: Vec::new(),
         }
     }
 
     pub fn write_i32(&self, value: i32) -> isize {
-        // println!("[+] write to [{} fd={}]", self.name, self.write_end);
+        // debug!("[+] {} write_i32({});", self.name, value);
         let v: i32 = value; // store a copy
         let rlen = unsafe {
             libc::write(
@@ -44,6 +49,7 @@ impl Pipe {
     }
 
     pub fn read_i32(&self) -> i32 {
+        // debug!("[+] {} read_i32()...", self.name); 
         let mut value: i32 = 0;
         let rlen;
         unsafe {
@@ -54,8 +60,14 @@ impl Pipe {
             );
         }
 
+        // debug!("[+] {} read_i32() = {};", self.name, value);
+
         assert_eq!(rlen, 4);
         return value;
+    }
+
+    pub async fn read_i32_async(&self) -> i32 {
+        self.read_i32()
     }
 
     pub fn read(&self, buf: &mut[u8]) {
@@ -66,7 +78,7 @@ impl Pipe {
         }
     }
 
-    pub fn dup_read(&self, dst_fd: i32) {
+    pub fn dup_read(&mut self, dst_fd: i32) {
         let ret = unsafe {
             libc::dup2(self.read_end, dst_fd)
         };
@@ -74,9 +86,11 @@ impl Pipe {
         if ret < 0 {
             panic!("dup2() failed");
         }
+
+        self.dups.push(dst_fd);
     }
 
-    pub fn dup_write(&self, dst_fd: i32) {
+    pub fn dup_write(&mut self, dst_fd: i32) {
         let ret = unsafe {
             libc::dup2(self.write_end, dst_fd)
         };
@@ -85,6 +99,7 @@ impl Pipe {
             panic!("dup2() failed");
         }
 
+        self.dups.push(dst_fd);
     }
 
     pub fn close_read(&mut self) {
@@ -104,16 +119,21 @@ impl Pipe {
 
         self.write_end = -1;
     }
+
 }
 
 impl Drop for Pipe{
     fn drop(&mut self){
-        println!("[*] dropping {}", self.name);
+        debug!("[*] dropping {}", self.name);
         unsafe {
             libc::close(self.read_end);
             libc::close(self.write_end);
             libc::close(self.read_end);
             libc::close(self.write_end);
+
+            for fd in self.dups.iter() {
+                libc::close(*fd);
+            }
         }
     }
 }

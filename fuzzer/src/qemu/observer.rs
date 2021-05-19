@@ -1,11 +1,23 @@
 use serde::{Deserialize, Serialize};
 
-use std::{collections::HashMap, fmt::{Debug, Display}};
+use std::{
+    collections::HashMap, 
+    fmt::{Debug, Display},
+    cmp,
+};
 use log::debug;
 
-use libafl::{bolts::shmem::{ShMem, ShMemProvider, StdShMemProvider}, executors::HasExecHooks};
 use libafl::{
-    bolts::{ownedref::OwnedArrayPtrMut, tuples::Named},
+    events::{ 
+        EventFirer,
+        Event::FeedbackStats,
+    },
+    executors::HasExecHooks, 
+    inputs::Input,
+    bolts::{
+       shmem::{ShMem, ShMemProvider, StdShMemProvider},
+       ownedref::OwnedArrayPtrMut, tuples::Named
+    },
     observers::{MapObserver, Observer},
     Error,
 };
@@ -17,9 +29,10 @@ pub struct SharedMemObserver<T>
 where
     T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned,
 {
-    map: OwnedArrayPtrMut<T>,
     initial: T,
+    map: OwnedArrayPtrMut<T>,
     name: String,
+    total_coverage_edges: usize,
 }
 
 impl<T> Observer for SharedMemObserver<T>
@@ -32,24 +45,29 @@ where
 impl<EM, I, S, T, Z> HasExecHooks<EM, I, S, Z> for SharedMemObserver<T>
 where
     T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned + Debug + Display + Eq,
+    I: Input,
+    EM: EventFirer<I, S>,
     Self: MapObserver<T>,
 {
     #[inline]
     fn pre_exec(
         &mut self,
         _fuzzer: &mut Z,
-        _state: &mut S,
-        _mgr: &mut EM,
+        state: &mut S,
+        mgr: &mut EM,
         _input: &I,
     ) -> Result<(), Error> {
 
         let mut index: usize = 0;
         let mut coverage: HashMap<usize, T> = HashMap::new();
 
+        let mut edges: usize = 0;
         let initial = self.initial();
         let cnt = self.usable_count();
+
         for i in self.map_mut()[0..cnt].iter_mut() {
             if *i != initial {
+                edges += 1;
                 coverage.insert(index, *i);
             }
             *i = initial;
@@ -57,12 +75,27 @@ where
             index+=1;
         }
 
+        if edges > self.total_coverage_edges {
+            self.total_coverage_edges = edges;
 
-        // debug!("coverage! {:?}", coverage);
-        debug!("coverage! edges {:?}", coverage.keys().count());
+            mgr.fire(state, FeedbackStats {
+                feedbacks: self.total_coverage_edges,
+            })?;
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn post_exec(
+        &mut self,
+        _fuzzer: &mut Z,
+        _state: &mut S,
+        mgr: &mut EM,
+        _input: &I,
+    ) -> Result<(), Error> {
 
 
-        // self.reset_map()
         Ok(())
     }
 }
@@ -129,6 +162,7 @@ where
             name: name.to_string(),
             map: OwnedArrayPtrMut::ArrayPtr((ptr, shmem.len())),
             initial: unsafe { *ptr },
+            total_coverage_edges: 0,
         }
     }
 }

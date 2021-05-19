@@ -1,17 +1,10 @@
 use core::marker::PhantomData;
-use std::{process::{Child, Command, ExitStatus}, thread};
 use std::process::Stdio;
-
-use futures::{
-    future::FutureExt, // for .fuse()
-    select,
-    pin_mut,
+use std::{
+    process::{Child, Command},
+    thread,
 };
 
-use async_std::task;
-
-// use libafl::bolts::shmem::{ShMemProvider, StdShMemProvider, ShMem};
-use libafl::bolts::tuples::Named;
 use libafl::{
     corpus::Corpus,
     events::{EventFirer, EventRestarter},
@@ -28,8 +21,8 @@ use libafl::{
 
 use crate::qemu::{outfile::OutFile, pipe::Pipe};
 
-use hexdump;
-use log::{debug, info, warn, log_enabled, Level};
+// use hexdump;
+use log::{debug, info, log_enabled, warn, Level};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -40,7 +33,7 @@ const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000b848";
 
 pub struct Forkserver {
     // don't use this member directly
-    status_pipe: Arc<Pipe>,
+    // status_pipe: Arc<Pipe>,
     control_pipe: Pipe,
 
     pid: u32,       // pid of forkserver. this is the father which children will fork from
@@ -61,25 +54,25 @@ impl Forkserver {
         // ST   | AFL | Write | 199
         // ST   | Us  | Read  | Anon
         let mut control_pipe = Pipe::new("control_pipe".to_owned());
-        let mut _status_pipe = Pipe::new("status_pipe".to_owned());
+        let mut status_pipe = Pipe::new("status_pipe".to_owned());
 
         // pass down to afl CTL:read and ST:write
         control_pipe.dup_read(FORKSRV_FD);
-        _status_pipe.dup_write(FORKSRV_FD + 1);
-        let status_pipe = Arc::new(_status_pipe); 
+        status_pipe.dup_write(FORKSRV_FD + 1);
+        // let status_pipe = Arc::new(_status_pipe);
 
-        let mut child = Self::run_qemu(target, args);
+        let child = Self::run_qemu(target, args);
         let pid = child.id();
 
         let (sender, receiver) = channel();
         // multiplex child exit events and forkserver status messages to a single incoming pipe
         // this way we can avoid blocking forever if the forkserver crashes
-        Forkserver::async_collect_status_pipe(sender.clone(), status_pipe.clone());
+        Forkserver::async_collect_status_pipe(sender.clone(), status_pipe);
         Forkserver::update_on_child_exit(child, sender.clone());
 
         Self {
             control_pipe,
-            status_pipe,
+            // status_pipe,
             pid,
             child_pid: 0,
             status: 0,
@@ -118,7 +111,6 @@ impl Forkserver {
             .spawn()
             .expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
 
-
         if let Ok(Some(exit_status)) = child.try_wait() {
             warn!("child is dead :/ exit_status={}", exit_status);
         }
@@ -139,16 +131,15 @@ impl Forkserver {
         self.status = 0;
     }
 
+    // pub fn pid(&self) -> u32 {
+    //     self.pid
+    // }
 
-    pub fn pid(&self) -> u32 {
-        self.pid
-    }
+    // pub fn status(&self) -> i32 {
+    //     self.status
+    // }
 
-    pub fn status(&self) -> i32 {
-        self.status
-    }
-
-    pub fn do_handshake(&mut self) {
+    pub fn do_handshake(&self) {
         self.try_read_status();
         info!("[+] forkserver is alive!");
     }
@@ -160,7 +151,9 @@ impl Forkserver {
         thread::spawn(move || {
             debug!("[!] update_on_child_exit: new thread");
 
-            let status = child.wait().expect("Error while waiting for QEMU to finish");
+            let status = child
+                .wait()
+                .expect("Error while waiting for QEMU to finish");
             debug!("Child is done. status={}", status);
 
             let code = status.code().unwrap();
@@ -172,28 +165,29 @@ impl Forkserver {
     }
 
     /// collect all messages from an input Pipe and channel them to a `Sender` channel
-    pub fn async_collect_status_pipe(output: Sender<i32>, input: Arc<Pipe>) {
-        thread::spawn(move || {
-            loop {
-                let v = input.read_i32();
-                if v == -1073610753 { 
-                    output.send(0).unwrap();
-                    debug!("drink_status_pipe loop. read_i32() = FORKSERVER_ACK");
-                    continue;
-                }
-
-                output.send(v).unwrap();
-                debug!("drink_status_pipe loop. read_i32() = {}", v);
+    pub fn async_collect_status_pipe(output: Sender<i32>, input: Pipe) {
+        thread::spawn(move || loop {
+            let v = input.read_i32();
+            if v == -1073610753 {
+                output.send(0).unwrap();
+                debug!("drink_status_pipe loop. read_i32() = FORKSERVER_ACK");
+                continue;
             }
+
+            output.send(v).unwrap();
+            debug!("drink_status_pipe loop. read_i32() = {}", v);
         });
     }
 
     /// try read forkserver status from status channel
     /// if forkserver died returns None
-    pub fn try_read_status(&mut self) -> Option<i32> {
-        let status = self.child_status_receiver
-            .lock().expect("Error taking lock for status receiver")
-            .recv().expect("Error reading from status receiver");
+    pub fn try_read_status(&self) -> Option<i32> {
+        let status = self
+            .child_status_receiver
+            .lock()
+            .expect("Error taking lock for status receiver")
+            .recv()
+            .expect("Error reading from status receiver");
 
         if status >= 0 {
             return Some(status);
@@ -253,7 +247,7 @@ where
             args.push(item.to_owned());
         }
 
-        let mut forkserver = Forkserver::new(target.clone(), args.clone());
+        let forkserver = Forkserver::new(target.clone(), args.clone());
         forkserver.do_handshake();
 
         return Ok(Self {
@@ -278,6 +272,9 @@ where
         &self.forkserver
     }
 
+    fn mut_forkserver(&mut self) -> &mut Forkserver {
+        &mut self.forkserver
+    }
 }
 
 impl<EM, I, OT, S> Executor<I> for ForkserverExecutor<EM, I, OT, S>
@@ -287,11 +284,10 @@ where
 {
     #[inline]
     fn run_target(&mut self, _input: &I) -> Result<ExitKind, Error> {
-        let forkserver = &mut self.forkserver;
+        let forkserver = self.mut_forkserver();
 
         forkserver.control_pipe.write_i32(0);
         debug!("[+] sent alive signal to child");
-
 
         if let Some(child_pid) = forkserver.try_read_status() {
             debug!("[+] child pid {}", child_pid);
@@ -320,12 +316,11 @@ where
     #[inline]
     fn pre_exec(
         &mut self,
-        fuzzer: &mut Z,
-        state: &mut S,
-        event_mgr: &mut EM,
+        _fuzzer: &mut Z,
+        _state: &mut S,
+        _event_mgr: &mut EM,
         input: &I,
     ) -> Result<(), Error> {
-
         debug!("[-] pre exec");
 
         self.out_file
@@ -342,14 +337,18 @@ where
         _event_mgr: &mut EM,
         _input: &I,
     ) -> Result<(), Error> {
-        
         //move the head back
         self.out_file.rewind();
 
-        if !self.forkserver.is_child_alive {
+        if !self.forkserver().is_child_alive {
+            let target = self.target().clone();
+            let args = self.args().clone();
+
+            // let mut forkserver = self.mut_forkserver();
+
             info!("Child has exited. respawning...");
-            self.forkserver.restart(self.target.clone(), self.args.clone());
-            self.forkserver.do_handshake();
+            self.mut_forkserver().restart(target, args);
+            self.forkserver().do_handshake();
         }
 
         debug!("[-] post exec");

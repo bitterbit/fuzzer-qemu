@@ -66,18 +66,6 @@ impl Pipe {
         return value;
     }
 
-    pub async fn read_i32_async(&self) -> i32 {
-        self.read_i32()
-    }
-
-    pub fn read(&self, buf: &mut[u8]) {
-        // println!("read from fd={}", self.read_end);
-        unsafe {
-            let mut f: File = File::from_raw_fd(self.read_end);
-            f.read_exact(buf).expect("Could not read from pipe");
-        }
-    }
-
     pub fn dup_read(&mut self, dst_fd: i32) {
         let ret = unsafe {
             libc::dup2(self.read_end, dst_fd)
@@ -102,6 +90,7 @@ impl Pipe {
         self.dups.push(dst_fd);
     }
 
+    #[allow(dead_code)]
     pub fn close_read(&mut self) {
         println!("closing read_end={}", self.read_end);
         unsafe {
@@ -111,6 +100,7 @@ impl Pipe {
         self.read_end = -1;
     }
 
+    #[allow(dead_code)]
     pub fn close_write(&mut self) {
         println!("closing write_end={}", self.read_end);
         unsafe {

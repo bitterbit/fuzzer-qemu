@@ -20,10 +20,6 @@ impl OutFile {
         Self { file: f, max_len }
     }
 
-    pub fn as_raw_fd(&self) -> RawFd {
-        self.file.as_raw_fd()
-    }
-
     pub fn write_buf(&mut self, buf: &Vec<u8>) {
         self.file.seek(SeekFrom::Start(0)).unwrap();
         self.file.write(buf).unwrap();

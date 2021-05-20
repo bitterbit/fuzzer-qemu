@@ -5,6 +5,7 @@ use libafl::{
 };
 
 use serde::{Deserialize, Serialize};
+use log::info;
 
 /// Holds all coverage ever seen
 /// Makes it easy to understand if we hit a new edge
@@ -14,7 +15,8 @@ pub struct CoverageFeedbackState
     /// Name identifier of this instance
     pub name: String,
     /// Contains information about untouched entries
-    pub all_time_coverage: Vec<bool>,
+    all_time_coverage: Vec<bool>,
+    count: usize,
 }
 
 impl FeedbackState for CoverageFeedbackState {}
@@ -33,6 +35,7 @@ impl CoverageFeedbackState {
         Self {
             name: name.to_string(),
             all_time_coverage: vec![false; map_size],
+            count: 0,
         }
     }
 
@@ -48,6 +51,9 @@ impl CoverageFeedbackState {
         // we have never seen it up until now,
         // mark it as seen and return false to show it was not seen
         self.all_time_coverage[index] = true;
+        self.count += 1;
+        info!("new coverage: #edge {}", self.count);
+
         Ok(false)
     }
 }

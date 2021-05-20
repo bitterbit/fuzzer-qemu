@@ -28,12 +28,10 @@ use std::sync::{Arc, Mutex};
 
 // taken from qemuafl/imported/config.h
 const FORKSRV_FD: i32 = 198;
-// const MAP_SIZE: usize = 1 << 16;
-const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000b97c";
+                                    //    5500000000
+const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000ba78";
 
 pub struct Forkserver {
-    // don't use this member directly
-    // status_pipe: Arc<Pipe>,
     control_pipe: Pipe,
 
     pid: u32,       // pid of forkserver. this is the father which children will fork from
@@ -103,10 +101,11 @@ impl Forkserver {
                 "QEMU_SET_ENV",
                 &format!("LD_LIBRARY_PATH={}", ld_library_path),
             )
-            // .env("AFL_DEBUG", "1")
+            .env("AFL_DEBUG", "1")
+            .env("AFL_QEMU_DEBUG_MAPS", "1")
             .env("AFL_QEMU_PERSISTENT_GPR", "1") // TODO make this configurable by api
             .env("AFL_QEMU_PERSISTENT_ADDR", AFL_QEMU_PERSISTENT_ADDR) // 0x5500000000 + $(nm --dynamic | grep main)
-            // .env("AFL_INST_LIBS", "1")
+            .env("AFL_INST_LIBS", "1")
             // .env("AFL_QEMU_PERSISTENT_CNT", "100")
             .spawn()
             .expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process

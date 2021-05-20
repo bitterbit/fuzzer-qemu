@@ -17,12 +17,12 @@ use log::debug;
 
 mod qemu;
 
-use qemu::{forkserver::ForkserverExecutor, observer::SharedMemObserver};
+use qemu::{executor::forkserver::ForkserverExecutor, observer::SharedMemObserver};
 
 use crate::qemu::feedback::{bitmap::MaxBitmapFeedback, bitmap_state::CoverageFeedbackState};
 
 // we are using bit indexes so this is equivilent to 2^16 of byte sized cells
-const MAP_SIZE: usize = 1 << 13;
+const MAP_SIZE: usize = 1 << 10;
 
 /***
  * - [V] make sure we can catch a crash
@@ -58,10 +58,6 @@ pub fn main() {
     let cov_observer: SharedMemObserver<u8> =
         SharedMemObserver::new("coverage", "__AFL_SHM_ID", MAP_SIZE);
 
-    // let feedback_state = MapFeedbackState::with_observer(&cov_observer);
-    // let feedback = MaxMapFeedback::new_tracking(&feedback_state, &cov_observer, true, false);
-
-    // let feedbacks_name = cov_observer.name().to_string();
     let feedback_state = CoverageFeedbackState::new("coverage", MAP_SIZE * 8);
     let feedback = MaxBitmapFeedback::new(&cov_observer);
 

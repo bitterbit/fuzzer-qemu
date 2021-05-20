@@ -30,7 +30,7 @@ where
     initial: T,
     map: OwnedArrayPtrMut<T>,
     name: String,
-    total_coverage_edges: usize,
+    // total_coverage_edges: usize,
 }
 
 impl<T> Observer for SharedMemObserver<T>
@@ -56,30 +56,12 @@ where
         _input: &I,
     ) -> Result<(), Error> {
 
-        let mut index: usize = 0;
-        let mut coverage: HashMap<usize, T> = HashMap::new();
-
         let mut edges: usize = 0;
         let initial = self.initial();
         let cnt = self.usable_count();
 
         for i in self.map_mut()[0..cnt].iter_mut() {
-            if *i != initial {
-                edges += 1;
-                coverage.insert(index, *i);
-            }
-
             *i = initial;
-
-            index+=1;
-        }
-
-        if edges > self.total_coverage_edges {
-            self.total_coverage_edges = edges;
-
-            mgr.fire(state, FeedbackStats {
-                feedbacks: self.total_coverage_edges,
-            })?;
         }
 
         Ok(())
@@ -169,7 +151,6 @@ where
             name: name.to_string(),
             map: OwnedArrayPtrMut::ArrayPtr((ptr, shmem.len())),
             initial: unsafe { *ptr },
-            total_coverage_edges: 0,
         }
     }
 }

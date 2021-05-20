@@ -1,15 +1,13 @@
 use std::path::PathBuf;
 
 use libafl::{
-    corpus::IndexesLenTimeMinimizerCorpusScheduler,
     bolts::tuples::tuple_list,
+    corpus::IndexesLenTimeMinimizerCorpusScheduler,
     corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
     events::SimpleEventManager,
-    feedbacks::{CrashFeedback, MapFeedbackState, MaxMapFeedback},
+    feedbacks::CrashFeedback,
     fuzzer::{Fuzzer, StdFuzzer},
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
-    // inputs::BytesInput,
-    // observers::TimeObserver,
     stages::mutational::StdMutationalStage,
     state::StdState,
     stats::SimpleStats,
@@ -21,15 +19,17 @@ mod qemu;
 
 use qemu::{forkserver::ForkserverExecutor, observer::SharedMemObserver};
 
-const MAP_SIZE: usize = 1 << 16;
-// const MAP_SIZE: usize = 1 << 10;
+use crate::qemu::feedback::{bitmap::MaxBitmapFeedback, bitmap_state::CoverageFeedbackState};
+
+// we are using bit indexes so this is equivilent to 2^16 of byte sized cells
+const MAP_SIZE: usize = 1 << 13;
 
 /***
  * - [V] make sure we can catch a crash
  * - [V] print out coverage stats
  * - [ ] custom mutator
- * - [V] what is taking most time? 
- * - [V] try out smaller shmem size 
+ * - [V] what is taking most time?
+ * - [V] try out smaller shmem size
  *  - [ ] make qumuafl respect map size from ENV
  *  - [ ] reduce time spent on coverage stats by:
  *      - dynamic map size
@@ -46,9 +46,9 @@ pub fn main() {
     let mut mgr = SimpleEventManager::new(stats);
 
     /*
-     * Observer - a "driver" just giving access to some resource. In our case this 
+     * Observer - a "driver" just giving access to some resource. In our case this
      * resource is a shared memory region
-     * FeedbackState - 
+     * FeedbackState -
      * Feedback - decides wether a given input is interesting
      *
      */
@@ -58,8 +58,12 @@ pub fn main() {
     let cov_observer: SharedMemObserver<u8> =
         SharedMemObserver::new("coverage", "__AFL_SHM_ID", MAP_SIZE);
 
-    let feedback_state = MapFeedbackState::with_observer(&cov_observer);
-    let feedback = MaxMapFeedback::new_tracking(&feedback_state, &cov_observer, true, false);
+    // let feedback_state = MapFeedbackState::with_observer(&cov_observer);
+    // let feedback = MaxMapFeedback::new_tracking(&feedback_state, &cov_observer, true, false);
+
+    // let feedbacks_name = cov_observer.name().to_string();
+    let feedback_state = CoverageFeedbackState::new("coverage", MAP_SIZE * 8);
+    let feedback = MaxBitmapFeedback::new(&cov_observer);
 
     // let temp_corpus = OnDiskCorpus::new(PathBuf::from("./queue")).unwrap();
     let temp_corpus = InMemoryCorpus::new();
@@ -77,8 +81,7 @@ pub fn main() {
     let objective = CrashFeedback::new();
 
     // let scheduler = QueueCorpusScheduler::new();
-    let scheduler =
-        IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
+    let scheduler = IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
 
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 

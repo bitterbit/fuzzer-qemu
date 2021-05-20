@@ -68,6 +68,7 @@ where
                 edges += 1;
                 coverage.insert(index, *i);
             }
+
             *i = initial;
 
             index+=1;

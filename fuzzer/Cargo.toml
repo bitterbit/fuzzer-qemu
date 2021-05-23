@@ -1,6 +1,6 @@
 [package]
-name = "src"
-version = "0.1.0"
+name = "fuzzer"
+version = "0.1.1"
 authors = ["galtashma <galtashma@gmail.com>"]
 edition = "2018"
 
@@ -16,11 +16,3 @@ log = "*"
 env_logger = "0.8.3"
 hexdump = "0.1.0"
 num-integer = "0.1"
-
-[[bin]]
-name = "fuzzer"
-path = "src/main.rs"
-
-[[bin]]
-name = "show-map"
-path = "src/show_map.rs"

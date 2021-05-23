@@ -178,6 +178,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzzer"
+version = "0.1.1"
+dependencies = [
+ "env_logger",
+ "hexdump",
+ "libafl",
+ "libc",
+ "log",
+ "num-integer",
+ "pretty-hex",
+ "rand",
+ "serde",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -709,21 +724,6 @@ name = "squote"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fccf17fd09e2455ea796d2ad267b64fa2c5cbd8701b2a93b555d2aa73449f7d"
-
-[[package]]
-name = "src"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "hexdump",
- "libafl",
- "libc",
- "log",
- "num-integer",
- "pretty-hex",
- "rand",
- "serde",
-]
 
 [[package]]
 name = "stable_deref_trait"

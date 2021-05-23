@@ -1,30 +1,10 @@
-use core::marker::PhantomData;
-use std::process::{ExitStatus, Stdio};
-use std::{
-    process::{Child, Command},
-    thread,
-};
+use std::process::Command;
+use std::process::Stdio;
 
-use libafl::{
-    corpus::Corpus,
-    events::{EventFirer, EventRestarter},
-    executors::{
-        Executor, ExitKind, HasExecHooks, HasExecHooksTuple, HasObservers, HasObserversHooks,
-    },
-    feedbacks::Feedback,
-    fuzzer::HasObjective,
-    inputs::{HasTargetBytes, Input},
-    observers::ObserversTuple,
-    state::HasSolutions,
-    Error,
-};
-
-use crate::qemu::{outfile::OutFile, pipe::Pipe};
+use libafl::executors::ExitKind;
 
 // use hexdump;
-use log::{debug, info, log_enabled, warn, Level};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use log::{log_enabled, Level};
 
 pub struct SimpleQEMU {
     target: String,
@@ -33,10 +13,7 @@ pub struct SimpleQEMU {
 
 impl SimpleQEMU {
     pub fn new(target: String, args: Vec<String>) -> Self {
-        Self {
-            target, 
-            args,
-        }
+        Self { target, args }
     }
 
     pub fn sync_run(&self) -> ExitKind {

@@ -1,18 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-use std::{
-    collections::HashMap, 
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 use libafl::{
-    events::EventFirer,
-    executors::HasExecHooks, 
-    inputs::Input,
     bolts::{
-       shmem::{ShMem, ShMemProvider, StdShMemProvider},
-       ownedref::OwnedArrayPtrMut, tuples::Named
+        ownedref::OwnedArrayPtrMut,
+        shmem::{ShMem, ShMemProvider, StdShMemProvider},
+        tuples::Named,
     },
+    events::EventFirer,
+    executors::HasExecHooks,
+    inputs::Input,
     observers::{MapObserver, Observer},
     Error,
 };
@@ -30,16 +28,21 @@ where
     // total_coverage_edges: usize,
 }
 
-impl<T> Observer for SharedMemObserver<T>
-where
-    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned,
+impl<T> Observer for SharedMemObserver<T> where
+    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned
 {
 }
 
-
 impl<EM, I, S, T, Z> HasExecHooks<EM, I, S, Z> for SharedMemObserver<T>
 where
-    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned + Debug + Display + Eq,
+    T: Default
+        + Copy
+        + 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Debug
+        + Display
+        + Eq,
     I: Input,
     EM: EventFirer<I, S>,
     Self: MapObserver<T>,
@@ -48,12 +51,10 @@ where
     fn pre_exec(
         &mut self,
         _fuzzer: &mut Z,
-        state: &mut S,
-        mgr: &mut EM,
+        _state: &mut S,
+        _mgr: &mut EM,
         _input: &I,
     ) -> Result<(), Error> {
-
-        let mut edges: usize = 0;
         let initial = self.initial();
         let cnt = self.usable_count();
 
@@ -72,8 +73,6 @@ where
         _mgr: &mut EM,
         _input: &I,
     ) -> Result<(), Error> {
-
-
         Ok(())
     }
 }
@@ -120,7 +119,14 @@ where
 
 impl<T> SharedMemObserver<T>
 where
-    T: Default + Copy + 'static + serde::Serialize + serde::de::DeserializeOwned + Debug + Display + Eq
+    T: Default
+        + Copy
+        + 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Debug
+        + Display
+        + Eq,
 {
     /// Creates a new MapObserver
     pub fn new(name: &'static str, env_shmem_key: &str, map_size: usize) -> Self {
@@ -138,7 +144,7 @@ where
 
         // memset(shmem.ptr(), 0, shmem.len())
         unsafe {
-            let u8_ptr : *mut u8 = ptr as *mut u8;
+            let u8_ptr: *mut u8 = ptr as *mut u8;
             for i in 0..shmem.len() {
                 *u8_ptr.add(i) = 0;
             }

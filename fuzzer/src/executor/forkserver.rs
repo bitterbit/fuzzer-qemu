@@ -19,7 +19,10 @@ use libafl::{
     Error,
 };
 
-use crate::qemu::{outfile::OutFile, pipe::Pipe};
+use crate::{
+    outfile::OutFile,
+    pipe::Pipe,
+};
 
 // use hexdump;
 use log::{debug, info, log_enabled, warn, Level};

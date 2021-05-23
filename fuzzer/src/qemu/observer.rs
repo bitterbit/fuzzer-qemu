@@ -6,10 +6,7 @@ use std::{
 };
 
 use libafl::{
-    events::{ 
-        EventFirer,
-        Event::FeedbackStats,
-    },
+    events::EventFirer,
     executors::HasExecHooks, 
     inputs::Input,
     bolts::{

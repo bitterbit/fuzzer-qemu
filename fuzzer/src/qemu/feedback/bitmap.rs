@@ -1,14 +1,5 @@
 use core::marker::PhantomData;
-use libafl::{
-    bolts::tuples::Named,
-    corpus::Testcase,
-    executors::ExitKind,
-    feedbacks::{Feedback, FeedbackStatesTuple, Reducer, MaxReducer, MapIndexesMetadata},
-    inputs::Input,
-    observers::{MapObserver, ObserversTuple},
-    state::{HasFeedbackStates, HasMetadata},
-    Error,
-};
+use libafl::{Error, bolts::tuples::Named, corpus::Testcase, events::{EventFirer, Event}, executors::ExitKind, feedbacks::{Feedback, FeedbackStatesTuple, MapIndexesMetadata, MaxReducer, Reducer}, inputs::Input, observers::{MapObserver, ObserversTuple}, state::{HasFeedbackStates, HasMetadata}, stats::UserStats};
 
 use super::bitmap_state::CoverageFeedbackState;
 
@@ -23,7 +14,7 @@ where
 {
     /// Name identifier of the observer
     observer_name: String,
-                
+
     // vector containing all the basic-block identifiers that we hit in this target run
     current_coverage: Vec<usize>,
     phantom: PhantomData<(FT, S, R, O)>,
@@ -44,7 +35,12 @@ where
         }
     }
 
-    fn visit_coverage_byte(&mut self, map: &[u8], feedback_state: &mut CoverageFeedbackState, byte_index: usize) -> Result<bool, Error> {
+    fn visit_coverage_byte(
+        &mut self,
+        map: &[u8],
+        feedback_state: &mut CoverageFeedbackState,
+        byte_index: usize,
+    ) -> Result<bool, Error> {
         let mut interesting = false;
 
         let item = map[byte_index];
@@ -57,11 +53,11 @@ where
         for bit_index in 0..8 as u8 {
             let mask: u8 = 1 << bit_index;
             let positive = item & mask != 0;
-            let basic_block_id = byte_index*8 + bit_index as usize;
+            let basic_block_id = byte_index * 8 + bit_index as usize;
 
             if positive {
                 self.current_coverage.push(basic_block_id);
-                let seen_before = feedback_state.check_if_seen_and_mark(basic_block_id)?;  
+                let seen_before = feedback_state.check_if_seen_and_mark(basic_block_id)?;
                 if seen_before == false {
                     interesting = true;
                 }
@@ -80,14 +76,16 @@ where
     FT: FeedbackStatesTuple,
     I: Input,
 {
-    fn is_interesting<OT>(
+    fn is_interesting<EM, OT>(
         &mut self,
         state: &mut S,
+        manager: &mut EM,
         _input: &I,
         observers: &OT,
         _exit_kind: &ExitKind,
     ) -> Result<bool, Error>
     where
+        EM: EventFirer<I, S>,
         OT: ObserversTuple,
     {
         let mut interesting = false;
@@ -103,6 +101,16 @@ where
             if self.visit_coverage_byte(observer.map(), &mut map_state, i)? {
                 interesting = true;
             }
+        }
+
+        if interesting {
+            let value = UserStats::Number(map_state.get_all_time_count());
+
+            manager.fire(state, Event::UpdateUserStats {
+                value,
+                name: self.observer_name.to_string(),
+                phantom: PhantomData,
+            })?;
         }
 
         Ok(interesting)

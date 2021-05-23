@@ -1,18 +1,6 @@
 use std::path::PathBuf;
 
-use libafl::{
-    bolts::tuples::tuple_list,
-    corpus::IndexesLenTimeMinimizerCorpusScheduler,
-    corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
-    events::SimpleEventManager,
-    feedbacks::CrashFeedback,
-    fuzzer::{Fuzzer, StdFuzzer},
-    mutators::scheduled::{havoc_mutations, StdScheduledMutator},
-    stages::mutational::StdMutationalStage,
-    state::StdState,
-    stats::SimpleStats,
-    utils::{current_nanos, StdRand},
-};
+use libafl::{bolts::tuples::tuple_list, bolts::{current_nanos, rands::StdRand}, corpus::IndexesLenTimeMinimizerCorpusScheduler, corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler}, events::SimpleEventManager, feedbacks::CrashFeedback, fuzzer::{Fuzzer, StdFuzzer}, mutators::scheduled::{havoc_mutations, StdScheduledMutator}, stages::mutational::StdMutationalStage, state::StdState, stats::{MultiStats, SimpleStats}};
 use log::debug;
 
 mod qemu;
@@ -41,16 +29,19 @@ const MAP_SIZE: usize = 1 << 10;
 pub fn main() {
     env_logger::init();
 
-    let stats = SimpleStats::new(|s| println!("{}", s));
+    let stats = MultiStats::new(|s| println!("{}", s));
+    // let stats = SimpleStats::new(|s| println!("{}", s));
 
     let mut mgr = SimpleEventManager::new(stats);
 
     /*
-     * Observer - a "driver" just giving access to some resource. In our case this
-     * resource is a shared memory region
-     * FeedbackState -
-     * Feedback - decides wether a given input is interesting
-     *
+     * Observer -      A "driver" just giving access to some resource. In our case this
+     *                 resource is a shared memory region
+     * Feedback -      Determine if a given testcase has any feedback metadata from a
+     *                 testcase
+     * FeedbackState - determine if feedback from a testcase is interesting. for example
+     *                 if there is lot's of feedback collected but none is new we might 
+     *                 not be interested in this testcase
      */
 
     // shared memory provider, it sets up the shared memory and makes sure to zero it out before

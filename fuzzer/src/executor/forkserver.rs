@@ -34,10 +34,14 @@ use std::sync::{Arc, Mutex};
 
 // taken from qemuafl/imported/config.h
 const FORKSRV_FD: i32 = 198;
-                                    //    5500000000
-const AFL_QEMU_PERSISTENT_ADDR: &str = "0x550000ba78";
 
 pub struct Forkserver {
+    qemu: String,
+    target: String,
+    ld_library_path: String,
+    afl_persistent_addr: Option<String>,
+
+    status_pipe: Arc<Pipe>,
     control_pipe: Pipe,
 
     pid: u32,       // pid of forkserver. this is the father which children will fork from
@@ -50,7 +54,7 @@ pub struct Forkserver {
 }
 
 impl Forkserver {
-    pub fn new(target: String, args: Vec<String>) -> Self {
+    pub fn new(qemu: String, ld_library_path: String, target: String) -> Self {
         // NAME | Who | R/W   | ID
         // -------------------------
         // CTL  | AFL | Read  | 198
@@ -63,76 +67,81 @@ impl Forkserver {
         // pass down to afl CTL:read and ST:write
         control_pipe.dup_read(FORKSRV_FD);
         status_pipe.dup_write(FORKSRV_FD + 1);
-        // let status_pipe = Arc::new(_status_pipe);
 
-        let child = Self::run_qemu(target, args);
-        let pid = child.id();
-
-        let (sender, receiver) = channel();
         // multiplex child exit events and forkserver status messages to a single incoming pipe
         // this way we can avoid blocking forever if the forkserver crashes
-        Forkserver::async_collect_status_pipe(sender.clone(), status_pipe);
-        Forkserver::update_on_child_exit(child, sender.clone());
+        let (sender, receiver) = channel();
 
         Self {
-            control_pipe,
-            pid,
+            qemu,
+            target,
+            ld_library_path,
+            afl_persistent_addr: None,
+            pid: 0,
             child_pid: 0,
             status: 0,
-            is_qemu_alive: true,
+            is_qemu_alive: false,
+            status_pipe: Arc::new(status_pipe),
+            control_pipe,
             child_status_sender: sender,
             child_status_receiver: Arc::new(Mutex::new(receiver)),
         }
     }
 
-    pub fn run_qemu(target: String, args: Vec<String>) -> Child {
-        let ld_library_path = "/fuzz/bin/arm64-v8a";
-        let qemuafl = "/AFLplusplus/qemu_mode/qemuafl/build/qemu-aarch64";
-
-        let mut stdout = Stdio::null();
-        let mut stderr = Stdio::null();
-        if log_enabled!(Level::Debug) {
-            stdout = Stdio::inherit();
-            stderr = Stdio::inherit();
-        }
-
-        let mut child = Command::new(qemuafl)
-            .arg(target)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(stdout)
-            .stderr(stderr)
-            .env(
-                "QEMU_SET_ENV",
-                &format!("LD_LIBRARY_PATH={}", ld_library_path),
-            )
-            .env("AFL_DEBUG", "1")
-            .env("AFL_QEMU_DEBUG_MAPS", "1")
-            .env("AFL_QEMU_PERSISTENT_GPR", "1") // TODO make this configurable by api
-            .env("AFL_QEMU_PERSISTENT_ADDR", AFL_QEMU_PERSISTENT_ADDR) // 0x5500000000 + $(nm --dynamic | grep main)
-            .env("AFL_INST_LIBS", "1")
-            // .env("AFL_QEMU_PERSISTENT_CNT", "100")
-            .spawn()
-            .expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
-
-        if let Ok(Some(exit_status)) = child.try_wait() {
-            warn!("child is dead :/ exit_status={}", exit_status);
-        }
-
-        return child;
+    pub fn set_persistent_addr(&mut self, addr: String) {
+        self.afl_persistent_addr = Some(addr);
     }
 
-    pub fn restart(&mut self, target: String, args: Vec<String>) {
-        debug!("[+] restart forkserver. target={} args={:?}", target, args);
+    pub fn start(&mut self, args: Vec<String>) {
+        if self.is_qemu_alive {
+            panic!("Cannot start a new qemu server while one is still running");
+        }
 
-        let child = Self::run_qemu(target, args);
+        // input pipe --> sender channel
+        Forkserver::async_collect_status_pipe(self.child_status_sender.clone(), self.status_pipe.clone());
+        self.restart(args);
+    }
+
+    pub fn restart(&mut self, args: Vec<String>) {
+        let child = self.run_qemu(args);
         let pid = child.id();
 
+        // signal --> sender channel
         Forkserver::update_on_child_exit(child, self.child_status_sender.clone());
 
         self.pid = pid;
         self.is_qemu_alive = true;
         self.status = 0;
+    }
+
+    pub fn run_qemu(&self, args: Vec<String>) -> Child {
+        debug!("[+] run qemu forkserver. target={} args={:?}", self.target, args);
+        let mut cmd = Command::new(self.qemu.clone());
+        cmd.arg(self.target.clone());
+        cmd.args(args);
+        cmd.env("QEMU_SET_ENV", &format!("LD_LIBRARY_PATH={}", self.ld_library_path));
+
+        if log_enabled!(Level::Debug){
+            cmd.env("AFL_DEBUG", "1");
+            cmd.env("AFL_QEMU_DEBUG_MAPS", "1");
+        } else {
+            cmd.stdout(Stdio::null());
+            cmd.stderr(Stdio::null());
+        }
+
+        if let Some(persistent_addr) = &self.afl_persistent_addr {
+            cmd.env("AFL_QEMU_PERSISTENT_GPR", "1");
+            cmd.env("AFL_QEMU_PERSISTENT_ADDR", persistent_addr); // 0x5500000000 + $(nm --dynamic | grep main)
+        }
+
+        cmd.env("AFL_INST_LIBS", "1"); // TODO make configurable
+
+        let mut child = cmd.spawn().expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
+        if let Ok(Some(exit_status)) = child.try_wait() {
+            warn!("child is dead :/ exit_status={}", exit_status);
+        }
+
+        return child;
     }
 
     pub fn do_handshake(&self) {
@@ -162,17 +171,23 @@ impl Forkserver {
     }
 
     /// collect all messages from an input Pipe and channel them to a `Sender` channel
-    pub fn async_collect_status_pipe(output: Sender<i32>, input: Pipe) {
-        thread::spawn(move || loop {
-            let v = input.read_i32();
-            if v == -1073610753 {
-                output.send(0).unwrap();
-                debug!("drink_status_pipe loop. read_i32() = FORKSERVER_ACK");
-                continue;
-            }
+    pub fn async_collect_status_pipe(output: Sender<i32>, input: Arc<Pipe>) {
+        thread::spawn(move || {
+            let mut first = true;
+            loop {
+                let v = input.read_i32();
+                if first {
+                    // this can be seen using AFL_DEBUG=1 and observing the value logged by 
+                    // Debug: Sending status c00007ff
+                    debug!("Received start status {}", v); 
+                    output.send(0).unwrap();
+                    first = false;
+                    continue;
+                }
 
-            output.send(v).unwrap();
-            debug!("drink_status_pipe loop. read_i32() = {}", v);
+                output.send(v).unwrap();
+                debug!("drink_status_pipe loop. read_i32() = {}", v);
+            }
         });
     }
 
@@ -228,6 +243,9 @@ where
     OT: ObserversTuple,
 {
     pub fn new<OC, OF, Z>(
+        qemu: &str,
+        ld_library_path: &str,
+        afl_persistent_addr: Option<String>,
         bin: &str,
         argv: Vec<String>,
         observers: OT,
@@ -247,7 +265,16 @@ where
         let out_file = OutFile::new(&out_filename, 2048);
         let args = parse_argv(&argv, &out_filename);
 
-        let forkserver = Forkserver::new(target.clone(), args.clone());
+        let mut forkserver = Forkserver::new(
+            qemu.to_string(),
+            ld_library_path.to_string(),
+            bin.to_string());
+
+        if let Some(persistent_addr) = afl_persistent_addr {
+            forkserver.set_persistent_addr(persistent_addr);
+        }
+
+        forkserver.start(args.clone());
         forkserver.do_handshake();
 
         return Ok(Self {
@@ -345,13 +372,9 @@ where
         self.out_file.rewind();
 
         if !self.forkserver().is_qemu_alive {
-            let target = self.target().clone();
             let args = self.args().clone();
-
-            // let mut forkserver = self.mut_forkserver();
-
             info!("Child has exited. respawning...");
-            self.mut_forkserver().restart(target, args);
+            self.mut_forkserver().restart(args);
             self.forkserver().do_handshake();
         }
 

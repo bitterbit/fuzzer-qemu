@@ -1,23 +1,27 @@
-use configparser::ini::{Ini, IniDefault};
+use configparser::ini::Ini;
 use env_logger::Env;
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use libafl::{
     bolts::tuples::tuple_list,
     bolts::{current_nanos, rands::StdRand},
     corpus::IndexesLenTimeMinimizerCorpusScheduler,
-    corpus::{Corpus, InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
+    corpus::{OnDiskCorpus, QueueCorpusScheduler}, // InMemoryCorpus
     events::SimpleEventManager,
     feedbacks::CrashFeedback,
     fuzzer::{Fuzzer, StdFuzzer},
-    inputs::BytesInput,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     stages::mutational::StdMutationalStage,
     state::StdState,
     stats::MultiStats,
 };
 
-use log::{info, debug};
+use goblin::Object;
+
+use log::{debug, info, trace};
 
 use fuzzer::feedback::{bitmap::MaxBitmapFeedback, bitmap_state::CoverageFeedbackState};
 use fuzzer::{executor::forkserver::ForkserverExecutor, observer::SharedMemObserver};
@@ -25,11 +29,11 @@ use fuzzer::{executor::forkserver::ForkserverExecutor, observer::SharedMemObserv
 const DEFAULT_MAP_SIZE: u64 = 1 << 10;
 
 /***
- * - [ ] configuration and cli
+ * - [V] configuration and cli
+ * - [V] automatic discovery of main address (convert sym to address)
  * - [ ] print out graphs exec/time and cov/time:
  *         implement an Stats object to print out stats and graphs
  * - [ ] make negative objective to hide well known crashes
- * - [ ] automatic discovery of main address (convert sym to address)
  * - [ ] timer to stop fuzzing after one minute
  * - [ ] custom mutator
  * - [ ] implement multi-client main
@@ -71,6 +75,8 @@ struct Config {
     persistent_sym: String,
     /// path to afl-qemu-trace binary
     qemu_path: String,
+    /// instruct qemu to load with libraries internaly with LD_LIBRARY_PATH
+    ld_library_path: Option<String>,
     /// directory in which fuzzer will store crashing testcases
     crash_path: PathBuf,
     /// directory for the initial fuzzing testcases
@@ -94,7 +100,7 @@ impl Config {
             .unwrap_or(DEFAULT_MAP_SIZE) as usize;
 
         let persistent_sym = config
-            .get(section, "map_size")
+            .get(section, "persistent_sym")
             .unwrap_or("main".to_string());
 
         let qemu_path = config
@@ -102,13 +108,15 @@ impl Config {
             .expect("Missing path to QEMU binary");
 
         let crash_path = PathBuf::from(
-            config.get(section, "crash_path")
-            .unwrap_or("./crashes".to_string())
+            config
+                .get(section, "crash_path")
+                .unwrap_or("./crashes".to_string()),
         );
 
         let corpus_path = PathBuf::from(
-            config.get(section, "corpus_path")
-            .unwrap_or("./corpus".to_string())
+            config
+                .get(section, "corpus_path")
+                .unwrap_or("./corpus".to_string()),
         );
 
         let queue_path = if let Some(p) = config.get(section, "queue_path") {
@@ -118,6 +126,7 @@ impl Config {
         };
 
         let plot_path = config.get(section, "plot_path");
+        let ld_library_path = config.get(section, "ld_library_path");
 
         Self {
             map_size,
@@ -127,6 +136,7 @@ impl Config {
             corpus_path,
             queue_path,
             plot_path,
+            ld_library_path,
         }
     }
 }
@@ -148,9 +158,35 @@ fn get_args() -> Result<(String, Vec<String>), String> {
 
     debug!("args {} {:?}", &target, &leftover_args);
 
-    return Ok((
-        target,
-        leftover_args.clone(),
+    return Ok((target, leftover_args.clone()));
+}
+
+const QEMU_BASE: u64 = 0x5500000000;
+
+fn find_addr_by_sym(bin: &str, sym_name: &str) -> Result<u64, goblin::error::Error> {
+    let path = Path::new(bin);
+    let buffer = fs::read(path)?;
+
+    if let Object::Elf(elf) = Object::parse(&buffer)? {
+        for sym in elf.dynsyms.iter() {
+            if let Some(opt_name) = elf.dynstrtab.get(sym.st_name) {
+                let name = opt_name?;
+                trace!("sym {}", name);
+                if sym_name == name {
+                    let addr = QEMU_BASE + sym.st_value;
+                    debug!("found symbol {} in bin {} at {:#x}", name, bin, addr);
+                    return Ok(addr);
+                }
+            }
+        }
+    } else {
+        return Err(goblin::error::Error::Malformed(
+            "Binary is not an elf".to_string(),
+        ));
+    }
+
+    return Err(goblin::error::Error::Malformed(
+        "Coud not find symbol".to_string(),
     ));
 }
 
@@ -160,8 +196,7 @@ pub fn main() {
 
     debug!("config = {:?}", config);
 
-    let (target, args) = get_args()
-        .expect("Error while parsing arguments");
+    let (target, args) = get_args().expect("Error while parsing arguments");
 
     let stats = MultiStats::new(|s| println!("{}", s));
     let mut mgr = SimpleEventManager::new(stats);
@@ -174,14 +209,15 @@ pub fn main() {
     let feedback_state = CoverageFeedbackState::new("coverage", config.map_size * 8);
     let feedback = MaxBitmapFeedback::new(&cov_observer);
 
-    let crash_corpus = OnDiskCorpus::new(config.crash_path)
-        .expect("Invalid crash directory path");
+    let crash_corpus = OnDiskCorpus::new(config.crash_path).expect("Invalid crash directory path");
 
     let rand = StdRand::with_seed(current_nanos());
-    let temp_corpus = OnDiskCorpus::new(config
+    let temp_corpus = OnDiskCorpus::new(
+        config
             .queue_path
-            .expect("In Memory Corpus not implemented. must specify path"))
-        .unwrap();
+            .expect("In Memory Corpus not implemented. must specify path"),
+    )
+    .unwrap();
 
     let mut state = StdState::new(rand, temp_corpus, crash_corpus, tuple_list!(feedback_state));
 
@@ -194,7 +230,15 @@ pub fn main() {
 
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
+    let persistent_addr = Some(format!(
+        "{:#x}",
+        find_addr_by_sym(&target, &config.persistent_sym).unwrap()
+    ));
+
     let mut executor = ForkserverExecutor::new(
+        &config.qemu_path,
+        &config.ld_library_path.unwrap_or("".to_string()),
+        persistent_addr,
         &target,
         args,
         tuple_list!(cov_observer),
@@ -209,7 +253,10 @@ pub fn main() {
     // this should run all files in corpus folder and record coverage for them
     state
         .load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, corpuses.as_slice())
-        .expect(&format!("Failed to load initial corpus from {:?}", corpuses));
+        .expect(&format!(
+            "Failed to load initial corpus from {:?}",
+            corpuses
+        ));
 
     info!("[+] done loading initial corpus");
 

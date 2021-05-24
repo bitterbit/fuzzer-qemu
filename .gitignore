@@ -3,3 +3,6 @@ bin/
 */target
 system/
 samples/
+
+# Allow bin directory in source folder
+!fuzzer/src/bin

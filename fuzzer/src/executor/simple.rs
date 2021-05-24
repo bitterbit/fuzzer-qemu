@@ -6,7 +6,6 @@ use std::process::Stdio;
 
 use libafl::executors::ExitKind;
 
-// use hexdump;
 use log::{debug, log_enabled, Level};
 
 pub struct SimpleQEMU {

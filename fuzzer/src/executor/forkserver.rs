@@ -1,3 +1,6 @@
+// #[cfg(target_family = "unix")]
+// use std::os::unix::process::ExitStatusExt;
+
 use core::marker::PhantomData;
 use std::process::Stdio;
 use std::{
@@ -73,7 +76,6 @@ impl Forkserver {
 
         Self {
             control_pipe,
-            // status_pipe,
             pid,
             child_pid: 0,
             status: 0,
@@ -85,7 +87,7 @@ impl Forkserver {
 
     pub fn run_qemu(target: String, args: Vec<String>) -> Child {
         let ld_library_path = "/fuzz/bin/arm64-v8a";
-        let qemuafl = "/AFLplusplus/qemu_mode/qemuafl/build/aarch64-linux-user/qemu-aarch64";
+        let qemuafl = "/AFLplusplus/qemu_mode/qemuafl/build/qemu-aarch64";
 
         let mut stdout = Stdio::null();
         let mut stderr = Stdio::null();
@@ -133,14 +135,6 @@ impl Forkserver {
         self.status = 0;
     }
 
-    // pub fn pid(&self) -> u32 {
-    //     self.pid
-    // }
-
-    // pub fn status(&self) -> i32 {
-    //     self.status
-    // }
-
     pub fn do_handshake(&self) {
         self.try_read_status();
         info!("[+] forkserver is alive!");
@@ -156,6 +150,7 @@ impl Forkserver {
             let status = child
                 .wait()
                 .expect("Error while waiting for QEMU to finish");
+
             debug!("Child is done. status={}", status);
 
             let code = status.code().unwrap();
@@ -214,14 +209,27 @@ where
     phantom: PhantomData<(EM, I, S)>,
 }
 
+fn parse_argv(v: &Vec<String>, out_filename: &str) -> Vec<String> {
+    let mut final_args = Vec::new();
+    for item in v {
+        if item == "@@" {
+            final_args.push(out_filename.to_string());
+            continue;
+        }
+        final_args.push(item.to_string());
+    }
+
+    final_args
+}
+
 impl<EM, I, OT, S> ForkserverExecutor<EM, I, OT, S>
 where
     I: Input + HasTargetBytes,
     OT: ObserversTuple,
 {
     pub fn new<OC, OF, Z>(
-        bin: &'static str,
-        argv: Vec<&'static str>,
+        bin: &str,
+        argv: Vec<String>,
         observers: OT,
         _fuzzer: &mut Z,
         _state: &mut S,
@@ -235,19 +243,9 @@ where
         Z: HasObjective<I, OF, S>,
     {
         let target = bin.to_string();
-        let mut args = Vec::<String>::new();
-
         let out_filename = format!("out-{}", 123456789); //TODO: replace it with a random number
         let out_file = OutFile::new(&out_filename, 2048);
-
-        for item in argv {
-            if item == "@@" {
-                args.push(out_filename.clone());
-                continue;
-            }
-
-            args.push(item.to_owned());
-        }
+        let args = parse_argv(&argv, &out_filename);
 
         let forkserver = Forkserver::new(target.clone(), args.clone());
         forkserver.do_handshake();

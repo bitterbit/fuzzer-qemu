@@ -1,5 +1,5 @@
 use env_logger::Env;
-use std::env;
+use std::{env, fs, path::PathBuf};
 
 use libafl::{
     bolts::tuples::tuple_list,
@@ -12,7 +12,7 @@ use libafl::{
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     stages::mutational::StdMutationalStage,
     state::StdState,
-    stats::MultiStats,
+    // stats::MultiStats,
 };
 
 use log::{debug, info};
@@ -23,7 +23,10 @@ use fuzzer::{
     executor::forkserver::ForkserverExecutor,
     feedback::{bitmap::MaxBitmapFeedback, bitmap_state::CoverageFeedbackState},
     observer::SharedMemObserver,
+    stats::PlotMultiStats,
 };
+
+const COVERAGE_ID: &str = "coverage";
 
 const QEMU_BASE: u64 = 0x5500000000;
 
@@ -86,23 +89,45 @@ fn get_args() -> Result<(String, Vec<String>), String> {
     return Ok((target, leftover_args.clone()));
 }
 
+pub fn create_dirs(config: &Config) {
+    if let Some(plot) = &config.plot_path {
+        fs::remove_dir_all(plot)
+            .expect("Error deleting pervious plots");
+
+        fs::create_dir_all(plot)
+            .expect("Error while creating plot directory");
+    }
+}
+
 pub fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let config = Config::parse("./config.ini");
+
+    create_dirs(&config);
 
     debug!("config = {:?}", config);
 
     let (target, args) = get_args().expect("Error while parsing arguments");
 
-    let stats = MultiStats::new(|s| println!("{}", s));
+    let stats;
+    let printer = |s| println!("{}", s);
+    if let Some(plot_path) = config.plot_path {
+        stats = PlotMultiStats::new_with_plot(
+            printer, 
+            PathBuf::from(plot_path), 
+            vec![COVERAGE_ID.to_string()]);
+    } else {
+        stats = PlotMultiStats::new(printer);
+    }
+
     let mut mgr = SimpleEventManager::new(stats);
 
     // shared memory provider, it sets up the shared memory and makes sure to zero it out before
     // each target run
     let cov_observer: SharedMemObserver<u8> =
-        SharedMemObserver::new("coverage", "__AFL_SHM_ID", config.map_size);
+        SharedMemObserver::new(COVERAGE_ID, "__AFL_SHM_ID", config.map_size);
 
-    let feedback_state = CoverageFeedbackState::new("coverage", config.map_size * 8);
+    let feedback_state = CoverageFeedbackState::new(COVERAGE_ID, config.map_size * 8);
     let feedback = MaxBitmapFeedback::new(&cov_observer);
 
     let crash_corpus = OnDiskCorpus::new(config.crash_path).expect("Invalid crash directory path");

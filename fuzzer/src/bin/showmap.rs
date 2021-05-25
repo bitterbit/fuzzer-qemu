@@ -1,18 +1,18 @@
 use libafl::observers::MapObserver;
-use fuzzer::{executor::simple::SimpleQEMU, observer::SharedMemObserver};
+
+use fuzzer::{config::Config, executor::simple::SimpleQEMU, observer::SharedMemObserver};
 
 use std::env;
 
 use env_logger::Env;
 use log::{debug, info, trace, warn};
 
-const MAP_SIZE: usize = 1 << 10;
-
 pub fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     if let Some((target, args)) = parse_args() {
-        run(target, args);
+        let config = Config::parse("./config.ini");
+        run(target, args, &config);
         return;
     }
 
@@ -67,15 +67,14 @@ fn collect_byte_coverage(map: &[u8]) -> Vec<usize> {
     return coverage;
 }
 
-fn run(target: String, args: Vec<String>) {
+fn run(target: String, args: Vec<String>, config: &Config) {
     let cov_observer: SharedMemObserver<u8> =
-        SharedMemObserver::new("coverage", "__AFL_SHM_ID", MAP_SIZE);
+        SharedMemObserver::new("coverage", "__AFL_SHM_ID", config.map_size);
 
     debug!("QEMU target={} args={:?}", target, args);
 
-    let qemu = SimpleQEMU::new(target, args.to_vec());
-
-    let exit_kind = qemu.sync_run(false);
+    let qemu = SimpleQEMU::new(config.qemu_path.to_string(), config.ld_library_path.to_owned());
+    let exit_kind = qemu.sync_run(&target, args, false);
 
     let coverage = collect_bit_coverage(cov_observer.map());
     // let coverage = collect_byte_coverage(cov_observer.map());

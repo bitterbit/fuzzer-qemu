@@ -12,3 +12,6 @@ persistent-hook:
 	    cross build --target aarch64-unknown-linux-gnu && \
 	    cd - &&\
 	    cp persistent_hook/target/aarch64-unknown-linux-gnu/debug/libpersistent.so bin/
+
+install:
+	cargo install --path fuzzer

@@ -33,30 +33,24 @@ const QEMU_BASE: u64 = 0x5500000000;
 /***
  * - [V] configuration and cli
  * - [V] automatic discovery of main address (convert sym to address)
- * - [ ] print out graphs exec/time and cov/time:
+ * - [V] print out graphs exec/time and cov/time:
  *         implement an Stats object to print out stats and graphs
- * - [ ] make negative objective to hide well known crashes
- * - [ ] timer to stop fuzzing after one minute
+ * - [ ] power schedule mutation scheduler
  * - [ ] custom mutator
  * - [ ] implement multi-client main
+ * - [ ] make negative objective to hide well known crashes
+ * - [ ] timer to stop fuzzing after one minute
  * - [ ] count unique objectives
  * - [ ] unique queue and crash file names
- * - [ ] retry crashes to make sure it is not a "mistake"
  * - [ ] fork afl++ to make permenent qemu patches
+ * - [ ] retry crashes to make sure it is not a "mistake"
  * - [V] count objectives
  * - [V] make sure we can catch a crash
  * - [V] print out coverage stats
  * - [V] what is taking most time?
- *
- *
- *  Make things faster
- *  - [V] try out smaller shmem size
- *  - [ ] make qumuafl respect map size from ENV
- *  - [ ] reduce time spent on coverage stats by:
- *      - dynamic map size
- *      - using array of indexes instead of memory map
- *      - using a bit instead of byte for each memory cell
- *      - get stats on coverage cell clashes
+ * - [ ] try out shmem coverage list instead of const sized map
+ * - [ ] plot perf (time spent in each area)
+ * - [ ] pref viewer server / dashboard
  */
 
 /*
@@ -91,6 +85,7 @@ fn get_args() -> Result<(String, Vec<String>), String> {
 
 pub fn create_dirs(config: &Config) {
     if let Some(plot) = &config.plot_path {
+        // TODO don't fail if directory exists
         fs::remove_dir_all(plot)
             .expect("Error deleting pervious plots");
 

@@ -1,7 +1,20 @@
 use env_logger::Env;
 use std::{env, fs, path::PathBuf};
 
-use libafl::{bolts::tuples::tuple_list, bolts::{current_nanos, rands::StdRand}, corpus::IndexesLenTimeMinimizerCorpusScheduler, corpus::{OnDiskCorpus, QueueCorpusScheduler}, events::SimpleEventManager, feedbacks::CrashFeedback, fuzzer::{Fuzzer, StdFuzzer}, inputs::BytesInput, mutators::scheduled::{havoc_mutations, StdScheduledMutator}, stages::mutational::StdMutationalStage, state::StdState};
+use libafl::{
+    bolts::tuples::tuple_list,
+    bolts::{current_nanos, rands::StdRand},
+    corpus::IndexesLenTimeMinimizerCorpusScheduler,
+    corpus::{OnDiskCorpus, QueueCorpusScheduler},
+    events::SimpleEventManager,
+    feedback_and,
+    feedbacks::CrashFeedback,
+    fuzzer::{Fuzzer, StdFuzzer},
+    inputs::BytesInput,
+    mutators::scheduled::{havoc_mutations, StdScheduledMutator},
+    stages::mutational::StdMutationalStage,
+    state::StdState,
+};
 
 use log::{debug, info};
 
@@ -28,7 +41,8 @@ const QEMU_BASE: u64 = 0x5500000000;
  * - [ ] implement multi-client main
  * - [ ] make negative objective to hide well known crashes
  * - [ ] timer to stop fuzzing after one minute
- * - [ ] count unique objectives
+ * - [X] count unique objectives
+ * - [ ] don't save crashes that are triggered by the same path
  * - [ ] unique queue and crash file names
  * - [ ] fork afl++ to make permenent qemu patches
  * - [ ] retry crashes to make sure it is not a "mistake"
@@ -74,11 +88,9 @@ fn get_args() -> Result<(String, Vec<String>), String> {
 pub fn create_dirs(config: &Config) {
     if let Some(plot) = &config.plot_path {
         // TODO don't fail if directory exists
-        fs::remove_dir_all(plot)
-            .expect("Error deleting pervious plots");
+        fs::remove_dir_all(plot).expect("Error deleting pervious plots");
 
-        fs::create_dir_all(plot)
-            .expect("Error while creating plot directory");
+        fs::create_dir_all(plot).expect("Error while creating plot directory");
     }
 }
 
@@ -94,9 +106,8 @@ pub fn main() {
 
     let stats;
     if let Some(plot_path) = config.plot_path {
-        stats = PlotMultiStats::new_with_plot(
-            PathBuf::from(plot_path), 
-            vec![COVERAGE_ID.to_string()]);
+        stats =
+            PlotMultiStats::new_with_plot(PathBuf::from(plot_path), vec![COVERAGE_ID.to_string()]);
     } else {
         stats = PlotMultiStats::new();
     }
@@ -126,7 +137,14 @@ pub fn main() {
     let mutator = StdScheduledMutator::new(havoc_mutations());
     let mut stages = tuple_list!(StdMutationalStage::new(mutator));
 
-    let objective = CrashFeedback::new();
+    // A feedback to choose if an input is a solution or not
+    // We want to do the same crash deduplication that AFL does
+    let objective = feedback_and!(
+        // Must be a crash
+        CrashFeedback::new(),
+        // Take it onlt if trigger new coverage over crashes
+        MaxBitmapFeedback::new(&cov_observer)
+    );
 
     let scheduler = IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
 

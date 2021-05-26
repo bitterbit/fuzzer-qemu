@@ -1,19 +1,7 @@
 use env_logger::Env;
 use std::{env, fs, path::PathBuf};
 
-use libafl::{
-    bolts::tuples::tuple_list,
-    bolts::{current_nanos, rands::StdRand},
-    corpus::IndexesLenTimeMinimizerCorpusScheduler,
-    corpus::{OnDiskCorpus, QueueCorpusScheduler}, // InMemoryCorpus
-    events::SimpleEventManager,
-    feedbacks::CrashFeedback,
-    fuzzer::{Fuzzer, StdFuzzer},
-    mutators::scheduled::{havoc_mutations, StdScheduledMutator},
-    stages::mutational::StdMutationalStage,
-    state::StdState,
-    // stats::MultiStats,
-};
+use libafl::{bolts::tuples::tuple_list, bolts::{current_nanos, rands::StdRand}, corpus::IndexesLenTimeMinimizerCorpusScheduler, corpus::{OnDiskCorpus, QueueCorpusScheduler}, events::SimpleEventManager, feedbacks::CrashFeedback, fuzzer::{Fuzzer, StdFuzzer}, inputs::BytesInput, mutators::scheduled::{havoc_mutations, StdScheduledMutator}, stages::mutational::StdMutationalStage, state::StdState};
 
 use log::{debug, info};
 
@@ -105,17 +93,15 @@ pub fn main() {
     let (target, args) = get_args().expect("Error while parsing arguments");
 
     let stats;
-    let printer = |s| println!("{}", s);
     if let Some(plot_path) = config.plot_path {
         stats = PlotMultiStats::new_with_plot(
-            printer, 
             PathBuf::from(plot_path), 
             vec![COVERAGE_ID.to_string()]);
     } else {
-        stats = PlotMultiStats::new(printer);
+        stats = PlotMultiStats::new();
     }
 
-    let mut mgr = SimpleEventManager::new(stats);
+    let mut mgr = SimpleEventManager::<BytesInput, PlotMultiStats>::new(stats);
 
     // shared memory provider, it sets up the shared memory and makes sure to zero it out before
     // each target run

@@ -10,30 +10,27 @@ use std::{
     time,
 };
 
-pub struct PlotMultiStats<F>
-where
-    F: FnMut(String),
-{
-    stats: MultiStats<F>,
+pub struct PlotMultiStats {
+    stats: MultiStats<fn(String)>,
     plot_file: Option<File>,
     last_write: Duration,
     user_stats: Vec<String>, // list of user stats we should track
 }
 
-impl<F> PlotMultiStats<F>
-where
-    F: FnMut(String),
+impl PlotMultiStats
 {
-    pub fn new(func: F) -> Self {
+    pub fn new() -> Self {
+        let printer = |s| println!("{}", s);
         Self {
-            stats: MultiStats::new(func),
+            stats: MultiStats::new(printer),
             plot_file: None,
             last_write: current_time(),
             user_stats: Vec::new(),
         }
     }
 
-    pub fn new_with_plot(func: F, plot_dir: PathBuf, user_stats: Vec<String>) -> Self {
+    pub fn new_with_plot(plot_dir: PathBuf, user_stats: Vec<String>) -> Self {
+        let printer = |s| println!("{}", s);
         let plot_f = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -44,7 +41,7 @@ where
         let plot_file = Some(plot_f);
 
         Self {
-            stats: MultiStats::new(func),
+            stats: MultiStats::new(printer),
             plot_file,
             last_write: current_time(),
             user_stats,
@@ -164,9 +161,7 @@ impl UserStatsInto for UserStats {
     }
 }
 
-impl<F> Stats for PlotMultiStats<F>
-where
-    F: FnMut(String),
+impl Stats for PlotMultiStats
 {
     /// the client stats, mutable
     fn client_stats_mut(&mut self) -> &mut Vec<ClientStats> {

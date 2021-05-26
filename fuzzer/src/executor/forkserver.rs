@@ -12,7 +12,7 @@ use libafl::{
     corpus::Corpus,
     events::{EventFirer, EventRestarter},
     executors::{
-        Executor, ExitKind, HasExecHooks, HasExecHooksTuple, HasObservers, HasObserversHooks,
+        Executor, ExitKind, HasExecHooksTuple, HasObservers, HasObserversHooks,
     },
     feedbacks::Feedback,
     fuzzer::HasObjective,
@@ -304,13 +304,24 @@ where
     }
 }
 
-impl<EM, I, OT, S> Executor<I> for ForkserverExecutor<EM, I, OT, S>
+impl<EM, I, OT, S, Z> Executor<EM, I, S, Z> for ForkserverExecutor<EM, I, OT, S>
 where
     I: Input + HasTargetBytes,
     OT: ObserversTuple,
 {
     #[inline]
-    fn run_target(&mut self, _input: &I) -> Result<ExitKind, Error> {
+    fn run_target(
+        &mut self,
+        _fuzzer: &mut Z,
+        _state: &mut S,
+        _mgr: &mut EM,
+        input: &I,
+    ) -> Result<ExitKind, Error> {
+
+       // write new testcase to input file
+       self.out_file
+           .write_buf(&input.target_bytes().as_slice().to_vec());
+
         let forkserver = self.mut_forkserver();
 
         forkserver.control_pipe.write_i32(0);
@@ -335,51 +346,9 @@ where
             return Ok(ExitKind::Crash);
         }
 
-        Ok(ExitKind::Ok)
-    }
-}
-
-impl<EM, I, OT, S, Z> HasExecHooks<EM, I, S, Z> for ForkserverExecutor<EM, I, OT, S>
-where
-    I: Input + HasTargetBytes,
-    OT: ObserversTuple,
-{
-    #[inline]
-    fn pre_exec(
-        &mut self,
-        _fuzzer: &mut Z,
-        _state: &mut S,
-        _event_mgr: &mut EM,
-        input: &I,
-    ) -> Result<(), Error> {
-        debug!("[-] pre exec");
-
-        self.out_file
-            .write_buf(&input.target_bytes().as_slice().to_vec());
-
-        Ok(())
-    }
-
-    #[inline]
-    fn post_exec(
-        &mut self,
-        _fuzzer: &mut Z,
-        _state: &mut S,
-        _event_mgr: &mut EM,
-        _input: &I,
-    ) -> Result<(), Error> {
-        //move the head back
+        // rewind to start before new testcase
         self.out_file.rewind();
-
-        if !self.forkserver().is_qemu_alive {
-            let args = self.args().clone();
-            info!("Child has exited. respawning...");
-            self.mut_forkserver().restart(args);
-            self.forkserver().do_handshake();
-        }
-
-        debug!("[-] post exec");
-        Ok(())
+        Ok(ExitKind::Ok)
     }
 }
 

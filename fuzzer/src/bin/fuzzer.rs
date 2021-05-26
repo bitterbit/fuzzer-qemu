@@ -5,7 +5,7 @@ use libafl::{
     bolts::tuples::tuple_list,
     bolts::{current_nanos, rands::StdRand},
     corpus::IndexesLenTimeMinimizerCorpusScheduler,
-    corpus::{OnDiskCorpus, QueueCorpusScheduler},
+    corpus::{OnDiskCorpus, QueueCorpusScheduler, InMemoryCorpus},
     events::SimpleEventManager,
     feedback_and,
     feedbacks::CrashFeedback,
@@ -25,6 +25,7 @@ use fuzzer::{
     feedback::{bitmap::MaxBitmapFeedback, bitmap_state::CoverageFeedbackState},
     observer::SharedMemObserver,
     stats::PlotMultiStats,
+    power::PowerMutationalStage,
 };
 
 const COVERAGE_ID: &str = "coverage";
@@ -102,6 +103,8 @@ pub fn main() {
 
     debug!("config = {:?}", config);
 
+    let rand = StdRand::with_seed(current_nanos());
+
     let (target, args) = get_args().expect("Error while parsing arguments");
 
     let stats;
@@ -122,20 +125,19 @@ pub fn main() {
     let feedback_state = CoverageFeedbackState::new(COVERAGE_ID, config.map_size * 8);
     let feedback = MaxBitmapFeedback::new(&cov_observer);
 
-    let crash_corpus = OnDiskCorpus::new(config.crash_path).expect("Invalid crash directory path");
+    let solution_corpus = OnDiskCorpus::new(config.crash_path).expect("Invalid crash directory path");
 
-    let rand = StdRand::with_seed(current_nanos());
-    let temp_corpus = OnDiskCorpus::new(
-        config
-            .queue_path
-            .expect("In Memory Corpus not implemented. must specify path"),
-    )
-    .unwrap();
+    // TODO respect config
+    let temp_corpus = InMemoryCorpus::new();
 
-    let mut state = StdState::new(rand, temp_corpus, crash_corpus, tuple_list!(feedback_state));
+    let mut state = StdState::new(rand, temp_corpus, solution_corpus, tuple_list!(feedback_state));
 
-    let mutator = StdScheduledMutator::new(havoc_mutations());
-    let mut stages = tuple_list!(StdMutationalStage::new(mutator));
+    // let mutator = StdScheduledMutator::new(havoc_mutations());
+
+    let mut stages = tuple_list!(
+        // StdMutationalStage::new(mutator),
+        PowerMutationalStage::new(StdScheduledMutator::new(havoc_mutations())),
+    );
 
     // A feedback to choose if an input is a solution or not
     // We want to do the same crash deduplication that AFL does
@@ -145,6 +147,8 @@ pub fn main() {
         // Take it onlt if trigger new coverage over crashes
         MaxBitmapFeedback::new(&cov_observer)
     );
+
+    // let objective = CrashFeedback::new();
 
     let scheduler = IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
 

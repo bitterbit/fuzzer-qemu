@@ -5,6 +5,7 @@ pub mod pipe;
 pub mod executor;
 pub mod feedback;
 pub mod stats;
+pub mod power;
 
 // utilities
 pub mod elf;

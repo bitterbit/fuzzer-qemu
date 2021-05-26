@@ -134,7 +134,7 @@ impl Forkserver {
             cmd.env("AFL_QEMU_PERSISTENT_ADDR", persistent_addr); // 0x5500000000 + $(nm --dynamic | grep main)
         }
 
-        cmd.env("AFL_INST_LIBS", "1"); // TODO make configurable
+        // cmd.env("AFL_INST_LIBS", "1"); // TODO make configurable
 
         let mut child = cmd.spawn().expect("Failed to run QEMU"); // start AFL ForkServer in QEMU mode in different process
         if let Ok(Some(exit_status)) = child.try_wait() {

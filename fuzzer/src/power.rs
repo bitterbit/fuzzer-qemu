@@ -21,6 +21,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
 use std::marker::PhantomData;
+use std::ops::Div;
+use std::ops::Mul;
+use std::time::Duration;
 
 pub struct PowerMutationalStage<C, E, EM, I, M, R, S, Z, F>
 where
@@ -36,6 +39,8 @@ where
     /// given a path hash, how many testcases resulted in this path
     paths: HashMap<u64, usize>,
     fuzz_level: usize,
+    avg_map_size: usize,
+    avg_exec_time: Duration,
     phantom: PhantomData<(C, E, EM, I, R, S, Z, F)>,
 }
 
@@ -57,6 +62,8 @@ where
         Self {
             mutator,
             fuzz_level: 1,
+            avg_map_size: 0,
+            avg_exec_time: Duration::from_micros(0),
             paths: HashMap::new(),
             phantom: PhantomData,
         }
@@ -71,18 +78,45 @@ where
                 )
             })?;
 
-        let mut perf_score = 100;
+        let mut perf_score: f64 = 100.0;
+        
+        // the more times a path was excersized, the lower the score
+        // the deeper we are into the fuzzing the higher the score
+        // if a testcase is faster than normal, it's cheaper to try it
+        // if a testcase has more coverage than normal it's is more probable to lead to intersting
+        // mutations
+        // perfer new interesting testcases to old ones as they have been less explored
 
-        // TODO calculate agains avg_map_size and avg_exec_us
+        if let Some(exec_time) = case.exec_time() {
+              perf_score = if exec_time.mul_f32(0.1) > self.avg_exec_time { 10.0 }
+              else if exec_time.mul_f32(0.25) > self.avg_exec_time { 25.0 }
+              else if exec_time.mul_f32(0.5) > self.avg_exec_time { 50.0 }
+              else if exec_time.mul_f32(0.75) > self.avg_exec_time { 75.0 }
+              else if exec_time.mul(4) < self.avg_exec_time { 300.0 }
+              else if exec_time.mul(3) < self.avg_exec_time { 200.0 }
+              else if exec_time.mul(2) < self.avg_exec_time { 150.0 } 
+              else { 100.0 };
+        }
+
+        let map_size = meta.list.len() as f64;
+        let avg_map_size = self.avg_map_size as f64;
+
+        perf_score = 
+            if map_size * 0.3  > avg_map_size { perf_score * 3.0 }
+        else if map_size * 0.5  > avg_map_size { perf_score * 2.0 }
+        else if map_size * 0.75 > avg_map_size { perf_score * 1.5 }
+        else if map_size * 3.0  < avg_map_size { perf_score * 0.25 }
+        else if map_size * 2.0  < avg_map_size { perf_score * 0.5 }
+        else if map_size * 1.5  < avg_map_size { perf_score * 0.75 }
+        else { perf_score };
+
 
         let path_hash = self.hash_testcase(meta);
         let path_count = self.get_paths(path_hash);
 
-        // the more times a path was excersized, the lower the score
-        // the deeper we are into the fuzzing the higher the score
-        perf_score = perf_score * (1 << self.fuzz_level) / (POWER_BETA * path_count);
+        let score = perf_score.floor() as usize * (1 << self.fuzz_level) / (POWER_BETA * path_count);
 
-        Ok(perf_score)
+        Ok(score)
     }
 
     /// returns the number of testcases (until now) that reached a given path
@@ -125,6 +159,43 @@ where
 
         return hasher.finish();
     }
+
+    fn init_avg_stats(&mut self, state: &S) -> Result<(), Error> {
+        let count = state.corpus().count();
+
+        if count == 0 {
+            return Err(Error::IllegalArgument(format!("Must have at least one input in the corpus")));
+        }
+
+        let mut total_exec_time = Duration::from_secs(0);
+        let mut total_map_size = 0;
+
+        for i in 0..count {
+            let testcase = state.corpus().get(i)?.borrow();
+            let exec_duartion =  testcase.exec_time()
+                .ok_or({
+                    Error::KeyNotFound(format!("Testcase #{} has no exec time", i))
+                })?;
+
+            total_exec_time += exec_duartion;
+            // total_exec_time += exec_duartion.as_micros() as usize;
+
+            // map size
+            let meta: &MapIndexesMetadata =
+                testcase.metadata().get::<MapIndexesMetadata>().ok_or_else(|| {
+                    Error::KeyNotFound(
+                        "Metadata needed for PowerMutationalStage not found in testcase".to_string(),
+                    )
+                })?;
+
+            total_map_size += meta.list.len();
+        }
+
+        self.avg_exec_time = total_exec_time.div(count as u32);
+        self.avg_map_size = total_map_size / count;
+        
+        Ok(())
+    }
 }
 
 impl<C, E, EM, I, M, R, S, Z, F> Stage<E, EM, S, Z> for PowerMutationalStage<C, E, EM, I, M, R, S, Z, F>
@@ -145,7 +216,13 @@ where
         manager: &mut EM,
         corpus_idx: usize,
     ) -> Result<(), Error> {
+
+        if self.avg_map_size == 0 && self.avg_exec_time.as_micros() == 0 {
+            self.init_avg_stats(&state)?;
+        }
+
         let num = self.iterations(&state.corpus().get(corpus_idx)?.borrow_mut())?;
+
         debug!(
             "[+] PowerMutationalStage decided to to mutate testcase #{} {} times",
             corpus_idx, num
@@ -178,7 +255,7 @@ where
                 // create a testcase and don't save it anywhere just so we can mark it's coverage
                 // as visited
                 let mut testcase = Testcase::new(input.clone());
-                fuzzer.feedback_mut().append_metadata(state, &mut testcase)?;
+                fuzzer.feedback_mut().append_metadata(state, &mut testcase)?; // add coverage to testcase
                 self.mark_path(&testcase)?;
             }
 
@@ -192,68 +269,3 @@ where
         Ok(())
     }
 }
-
-// // only splice and byte flips
-// pub fn default_power_mutations<C, I, R, S>() -> tuple_list_type!(
-//        BitFlipMutator<I, R, S>,
-//        ByteFlipMutator<I, R, S>,
-//        ByteIncMutator<I, R, S>,
-//        ByteDecMutator<I, R, S>,
-//        ByteNegMutator<I, R, S>,
-//        ByteRandMutator<I, R, S>,
-//        ByteAddMutator<I, R, S>,
-//        WordAddMutator<I, R, S>,
-//        DwordAddMutator<I, R, S>,
-//        QwordAddMutator<I, R, S>,
-//        ByteInterestingMutator<I, R, S>,
-//        WordInterestingMutator<I, R, S>,
-//        DwordInterestingMutator<I, R, S>,
-//        BytesDeleteMutator<I, R, S>,
-//        BytesDeleteMutator<I, R, S>,
-//        BytesDeleteMutator<I, R, S>,
-//        BytesDeleteMutator<I, R, S>,
-//        BytesExpandMutator<I, R, S>,
-//        BytesInsertMutator<I, R, S>,
-//        BytesRandInsertMutator<I, R, S>,
-//        BytesSetMutator<I, R, S>,
-//        BytesRandSetMutator<I, R, S>,
-//        BytesCopyMutator<I, R, S>,
-//        BytesSwapMutator<I, R, S>,
-//        CrossoverInsertMutator<C, I, R, S>,
-//        CrossoverReplaceMutator<C, I, R, S>,
-//    )
-// where
-//     I: Input + HasBytesVec,
-//     S: HasRand<R> + HasCorpus<C, I> + HasMetadata + HasMaxSize,
-//     C: Corpus<I>,
-//     R: Rand,
-// {
-//     tuple_list!(
-//         BitFlipMutator::new(),
-//         ByteFlipMutator::new(),
-//         ByteIncMutator::new(),
-//         ByteDecMutator::new(),
-//         ByteNegMutator::new(),
-//         ByteRandMutator::new(),
-//         ByteAddMutator::new(),
-//         WordAddMutator::new(),
-//         DwordAddMutator::new(),
-//         QwordAddMutator::new(),
-//         ByteInterestingMutator::new(),
-//         WordInterestingMutator::new(),
-//         DwordInterestingMutator::new(),
-//         BytesDeleteMutator::new(),
-//         BytesDeleteMutator::new(),
-//         BytesDeleteMutator::new(),
-//         BytesDeleteMutator::new(),
-//         BytesExpandMutator::new(),
-//         BytesInsertMutator::new(),
-//         BytesRandInsertMutator::new(),
-//         BytesSetMutator::new(),
-//         BytesRandSetMutator::new(),
-//         BytesCopyMutator::new(),
-//         BytesSwapMutator::new(),
-//         CrossoverInsertMutator::new(),
-//         CrossoverReplaceMutator::new(),
-//     )
-// }

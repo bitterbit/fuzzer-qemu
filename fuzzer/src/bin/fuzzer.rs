@@ -2,16 +2,16 @@ use env_logger::Env;
 use std::{env, fs, path::PathBuf};
 
 use libafl::{
-    bolts::tuples::tuple_list,
-    bolts::{current_nanos, rands::StdRand},
+    bolts::{tuples::tuple_list, tuples::Named, current_nanos, rands::StdRand},
     corpus::IndexesLenTimeMinimizerCorpusScheduler,
-    corpus::{OnDiskCorpus, QueueCorpusScheduler, InMemoryCorpus},
+    corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
     events::SimpleEventManager,
-    feedback_and,
-    feedbacks::CrashFeedback,
+    feedback_and, feedback_or_eager,
+    feedbacks::{CrashFeedback, TimeFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     inputs::BytesInput,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
+    observers::TimeObserver,
     stages::mutational::StdMutationalStage,
     state::StdState,
 };
@@ -24,8 +24,8 @@ use fuzzer::{
     executor::forkserver::ForkserverExecutor,
     feedback::{bitmap::MaxBitmapFeedback, bitmap_state::CoverageFeedbackState},
     observer::SharedMemObserver,
-    stats::PlotMultiStats,
     power::PowerMutationalStage,
+    stats::PlotMultiStats,
 };
 
 const COVERAGE_ID: &str = "coverage";
@@ -119,23 +119,30 @@ pub fn main() {
 
     // shared memory provider, it sets up the shared memory and makes sure to zero it out before
     // each target run
-    let cov_observer: SharedMemObserver<u8> =
-        SharedMemObserver::new(COVERAGE_ID, "__AFL_SHM_ID", config.map_size);
+    let coverage_observer: SharedMemObserver<u8> = SharedMemObserver::new(COVERAGE_ID, "__AFL_SHM_ID", config.map_size);
+    let time_observer = TimeObserver::new("time");
+    let feedback = feedback_or_eager!(
+        MaxBitmapFeedback::new(&coverage_observer),
+        TimeFeedback::new_with_observer(&time_observer)
+    );
 
     let feedback_state = CoverageFeedbackState::new(COVERAGE_ID, config.map_size * 8);
-    let feedback = MaxBitmapFeedback::new(&cov_observer);
 
-    let solution_corpus = OnDiskCorpus::new(config.crash_path).expect("Invalid crash directory path");
+    let solution_corpus =
+        OnDiskCorpus::new(config.crash_path).expect("Invalid crash directory path");
 
     // TODO respect config
     let temp_corpus = InMemoryCorpus::new();
 
-    let mut state = StdState::new(rand, temp_corpus, solution_corpus, tuple_list!(feedback_state));
-
-    // let mutator = StdScheduledMutator::new(havoc_mutations());
+    let mut state = StdState::new(
+        rand,
+        temp_corpus,
+        solution_corpus,
+        tuple_list!(feedback_state),
+    );
 
     let mut stages = tuple_list!(
-        // StdMutationalStage::new(mutator),
+        // StdMutationalStage::new(StdScheduledMutator::new(havoc_mutations())),
         PowerMutationalStage::new(StdScheduledMutator::new(havoc_mutations())),
     );
 
@@ -145,10 +152,8 @@ pub fn main() {
         // Must be a crash
         CrashFeedback::new(),
         // Take it onlt if trigger new coverage over crashes
-        MaxBitmapFeedback::new(&cov_observer)
+        MaxBitmapFeedback::new(&coverage_observer)
     );
-
-    // let objective = CrashFeedback::new();
 
     let scheduler = IndexesLenTimeMinimizerCorpusScheduler::new(QueueCorpusScheduler::new());
 
@@ -165,7 +170,7 @@ pub fn main() {
         persistent_addr,
         &target,
         args,
-        tuple_list!(cov_observer),
+        tuple_list!(coverage_observer, time_observer),
         &mut fuzzer,
         &mut state,
         &mut mgr,

@@ -1,3 +1,5 @@
+use std::{collections::{HashMap, hash_map::DefaultHasher}, hash::Hasher};
+
 use libafl::{
     bolts::tuples::Named,
     feedbacks::FeedbackState,
@@ -16,6 +18,7 @@ pub struct CoverageFeedbackState
     pub name: String,
     /// Contains information about untouched entries
     all_time_coverage: Vec<bool>,
+    path_hit_count: HashMap<u64, usize>,
     count: u64,
 }
 
@@ -35,26 +38,44 @@ impl CoverageFeedbackState {
         Self {
             name: name.to_string(),
             all_time_coverage: vec![false; map_size],
+            path_hit_count: HashMap::new(),
             count: 0,
         }
     }
 
-    pub fn check_if_seen_and_mark(&mut self, index: usize) -> Result<bool, Error> {
-        if index >= self.all_time_coverage.len() {
-            return Err(Error::IllegalArgument("index is too big for coverage array".to_string()))
+    fn seen_edge(&self, edge: usize) -> Result<bool, Error> {
+        if edge >= self.all_time_coverage.len() {
+            return Err(Error::IllegalArgument("edge index is too big for coverage array".to_string()))
         }
 
-        if self.all_time_coverage[index] {
-            return Ok(true);
-        }
+        Ok(self.all_time_coverage[edge])
+    }
 
-        // we have never seen it up until now,
-        // mark it as seen and return false to show it was not seen
-        self.all_time_coverage[index] = true;
-        self.count += 1;
-        debug!("new coverage: #edge {}", self.count);
+    pub fn is_path_interesting(&self, path: &[usize]) -> Result<bool, Error> {
+        for edge in path.iter() {
+            let seen_edge = self.seen_edge(*edge)?;
+
+            if seen_edge == false {
+                return Ok(true)
+            }
+        }
 
         Ok(false)
+    }
+
+    pub fn mark_path(&mut self, path: &[usize]) -> Result<(), Error> {
+        let mut interesting = false;
+
+        for edge in path {
+            if self.all_time_coverage[*edge] == false {
+                self.count += 1;
+                debug!("new coverage: #edge {}", self.count);
+            }
+
+            self.all_time_coverage[*edge] = true;
+        }
+
+        Ok(())
     }
 
     pub fn get_all_time_count(&self) -> u64 {

@@ -38,8 +38,6 @@ impl Pipe {
             )
         };
 
-        // println!("[+] done write");
-
         return rlen;
     }
 
@@ -87,7 +85,7 @@ impl Pipe {
 
     #[allow(dead_code)]
     pub fn close_read(&mut self) {
-        println!("closing read_end={}", self.read_end);
+        debug!("closing read_end={}", self.read_end);
         unsafe {
             libc::close(self.read_end);
         }
@@ -97,7 +95,7 @@ impl Pipe {
 
     #[allow(dead_code)]
     pub fn close_write(&mut self) {
-        println!("closing write_end={}", self.read_end);
+        debug!("closing write_end={}", self.read_end);
         unsafe {
             libc::close(self.read_end);
         }

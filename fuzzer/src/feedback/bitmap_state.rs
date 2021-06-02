@@ -63,9 +63,8 @@ impl CoverageFeedbackState {
         Ok(false)
     }
 
+    /// returns true if increased all-time count, false if no change
     pub fn mark_path(&mut self, path: &[usize]) -> Result<(), Error> {
-        let mut interesting = false;
-
         for edge in path {
             if self.all_time_coverage[*edge] == false {
                 self.count += 1;

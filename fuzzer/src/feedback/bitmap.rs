@@ -1,12 +1,10 @@
-use core::{marker::PhantomData};
+use core::marker::PhantomData;
 use libafl::{
     bolts::tuples::Named,
     corpus::Testcase,
     events::{Event, EventFirer},
     executors::ExitKind,
-    feedbacks::{
-        Feedback, FeedbackStatesTuple, MapFeedback, MapIndexesMetadata, MaxReducer, Reducer,
-    },
+    feedbacks::{Feedback, FeedbackStatesTuple, MapIndexesMetadata, MaxReducer, Reducer},
     inputs::Input,
     observers::{MapObserver, ObserversTuple},
     state::{HasFeedbackStates, HasMetadata},
@@ -15,38 +13,55 @@ use libafl::{
 };
 use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 
+use crate::observer::SharedMemObserver;
+
 use super::bitmap_state::CoverageFeedbackState;
 
-pub type MaxBitmapFeedback<FT, O, S> = BitmapFeedback<FT, O, MaxReducer, S>;
+pub type MaxBitmapFeedback<FT, S> = BitmapFeedback<FT, MaxReducer, S>;
 
 use log::{debug, trace};
 
-pub struct BitmapFeedback<FT, O, R, S>
+pub struct BitmapFeedback<FT, R, S>
 where
     R: Reducer<u8>,
-    O: MapObserver<u8>,
     S: HasFeedbackStates<FT>,
     FT: FeedbackStatesTuple,
 {
+    /// Name of this feedback, used in fired events
+    name: String,
     /// Name identifier of the observer
     observer_name: String,
+    /// Name identifier of the shared feedback state
+    feedback_state_name: String,
 
     // vector containing all the basic-block identifiers that we hit in this target run
     current_coverage: Vec<usize>,
     current_path_hash: u64,
-    phantom: PhantomData<(FT, S, R, O)>,
+    phantom: PhantomData<(FT, S, R)>,
 }
 
-impl<FT, O, R, S> BitmapFeedback<FT, O, R, S>
+impl<FT, R, S> BitmapFeedback<FT, R, S>
 where
     R: Reducer<u8>,
-    O: MapObserver<u8>,
     S: HasFeedbackStates<FT>,
     FT: FeedbackStatesTuple,
 {
-    pub fn new(observer: &O) -> Self {
+    pub fn new(name: &str) -> Self {
         Self {
-            observer_name: observer.name().to_string(),
+            name: name.to_string(),
+            observer_name: name.to_string(),
+            feedback_state_name: name.to_string(),
+            current_coverage: Vec::new(),
+            current_path_hash: 0,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn new_with_names(observer_name: &str, feedback_state_name: &str, name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            observer_name: observer_name.to_string(),
+            feedback_state_name: feedback_state_name.to_string(),
             current_coverage: Vec::new(),
             current_path_hash: 0,
             phantom: PhantomData,
@@ -86,10 +101,9 @@ where
     }
 }
 
-impl<I, FT, O, R, S> Feedback<I, S> for BitmapFeedback<FT, O, R, S>
+impl<I, FT, R, S> Feedback<I, S> for BitmapFeedback<FT, R, S>
 where
     R: Reducer<u8>,
-    O: MapObserver<u8>,
     S: HasFeedbackStates<FT>,
     FT: FeedbackStatesTuple,
     I: Input,
@@ -106,12 +120,12 @@ where
         EM: EventFirer<I, S>,
         OT: ObserversTuple,
     {
-        let observer = observers.match_name::<O>(&self.observer_name).unwrap();
+        let observer = observers.match_name::<SharedMemObserver<u8>>(&self.observer_name).unwrap();
         let size = observer.usable_count();
 
         let map_state: &mut CoverageFeedbackState = state
             .feedback_states_mut()
-            .match_name_mut::<CoverageFeedbackState>(&self.observer_name.to_string())
+            .match_name_mut::<CoverageFeedbackState>(&self.feedback_state_name.to_string())
             .unwrap();
 
         for i in 0..size {
@@ -119,7 +133,7 @@ where
         }
 
         let interesting = map_state.is_path_interesting(&self.current_coverage)?;
-        debug!("Bitmap Feedkback input interesting? {}", interesting);
+        debug!("Bitmap Feedback ({}) with state({}) input interesting? {}", self.name(), map_state.name(), interesting);
 
         self.calculate_path_hash();
 
@@ -130,7 +144,7 @@ where
                 state,
                 Event::UpdateUserStats {
                     value,
-                    name: self.observer_name.to_string(),
+                    name: self.name.to_string(),
                     phantom: PhantomData,
                 },
             )?;
@@ -146,11 +160,10 @@ where
         // the second call it will not be interesting, even though it is the exact same testcase
         let map_state: &mut CoverageFeedbackState = state
             .feedback_states_mut()
-            .match_name_mut::<CoverageFeedbackState>(&self.observer_name.to_string())
+            .match_name_mut::<CoverageFeedbackState>(&self.feedback_state_name.to_string())
             .unwrap();
 
-        map_state.mark_path(self.current_coverage.as_slice());
-        
+        map_state.mark_path(self.current_coverage.as_slice())?;
 
         let meta = MapIndexesMetadata::new(core::mem::take(&mut self.current_coverage));
         testcase.add_metadata(meta);
@@ -165,10 +178,9 @@ where
     }
 }
 
-impl<FT, O, R, S> Named for BitmapFeedback<FT, O, R, S>
+impl<FT, R, S> Named for BitmapFeedback<FT, R, S>
 where
     R: Reducer<u8>,
-    O: MapObserver<u8>,
     S: HasFeedbackStates<FT>,
     FT: FeedbackStatesTuple,
 {

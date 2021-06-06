@@ -6,7 +6,7 @@ use libafl::{
     corpus::IndexesLenTimeMinimizerCorpusScheduler,
     corpus::{InMemoryCorpus, OnDiskCorpus, QueueCorpusScheduler},
     events::SimpleEventManager,
-    feedback_and, feedback_or_eager,
+    feedback_and, feedback_or,
     feedbacks::{CrashFeedback, TimeFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     inputs::BytesInput,
@@ -130,7 +130,7 @@ pub fn main() {
     // feedback-state holds all-time coverage while feedback holds the last executions coverage
     // feedback will query State and ask it for it's feedback-state by name
     let feedback_state = CoverageFeedbackState::new(COVERAGE_ID, config.map_size * 8);
-    let feedback = feedback_or_eager!(
+    let feedback = feedback_or!(
         MaxBitmapFeedback::new(COVERAGE_ID),
         TimeFeedback::new_with_observer(&time_observer)
     );

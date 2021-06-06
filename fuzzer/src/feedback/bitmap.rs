@@ -37,6 +37,7 @@ where
     // vector containing all the basic-block identifiers that we hit in this target run
     current_coverage: Vec<usize>,
     current_path_hash: u64,
+    max_coverage_stat: u64,
     phantom: PhantomData<(FT, S, R)>,
 }
 
@@ -53,6 +54,7 @@ where
             feedback_state_name: name.to_string(),
             current_coverage: Vec::new(),
             current_path_hash: 0,
+            max_coverage_stat: 0,
             phantom: PhantomData,
         }
     }
@@ -64,6 +66,7 @@ where
             feedback_state_name: feedback_state_name.to_string(),
             current_coverage: Vec::new(),
             current_path_hash: 0,
+            max_coverage_stat: 0,
             phantom: PhantomData,
         }
     }
@@ -137,8 +140,9 @@ where
 
         self.calculate_path_hash();
 
-        if interesting {
-            let value = UserStats::Number(map_state.get_all_time_count());
+        if interesting && map_state.get_all_time_count() > self.max_coverage_stat {
+            self.max_coverage_stat = map_state.get_all_time_count();
+            let value = UserStats::Number(self.max_coverage_stat);
 
             manager.fire(
                 state,

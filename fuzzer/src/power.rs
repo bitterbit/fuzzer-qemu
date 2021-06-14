@@ -1,19 +1,18 @@
-use libafl::HasFeedback;
-use libafl::corpus::Testcase;
-use libafl::feedbacks::MapIndexesMetadata;
-use libafl::state::HasMetadata;
 use libafl::{
     bolts::rands::Rand,
-    corpus::Corpus,
+    corpus::{Corpus, Testcase},
+    feedbacks::{Feedback, MapIndexesMetadata},
     inputs::Input,
     mark_feature_time,
     mutators::Mutator,
     stages::Stage,
     start_timer,
-    state::{HasClientPerfStats, HasCorpus, HasRand},
-    Error, Evaluator,
-    feedbacks::Feedback,
+    state::{HasClientPerfStats, HasCorpus, HasMetadata, HasRand},
+    Error, Evaluator, HasFeedback,
 };
+
+#[cfg(feature = "introspection")]
+use libafl::stats::PerfFeature;
 
 use log::debug;
 use log::warn;
@@ -79,7 +78,7 @@ where
             })?;
 
         let mut perf_score: f64 = 100.0;
-        
+
         // the more times a path was excersized, the lower the score
         // the deeper we are into the fuzzing the higher the score
         // if a testcase is faster than normal, it's cheaper to try it
@@ -88,33 +87,49 @@ where
         // perfer new interesting testcases to old ones as they have been less explored
 
         if let Some(exec_time) = case.exec_time() {
-              perf_score = if exec_time.mul_f32(0.1) > self.avg_exec_time { 10.0 }
-              else if exec_time.mul_f32(0.25) > self.avg_exec_time { 25.0 }
-              else if exec_time.mul_f32(0.5) > self.avg_exec_time { 50.0 }
-              else if exec_time.mul_f32(0.75) > self.avg_exec_time { 75.0 }
-              else if exec_time.mul(4) < self.avg_exec_time { 300.0 }
-              else if exec_time.mul(3) < self.avg_exec_time { 200.0 }
-              else if exec_time.mul(2) < self.avg_exec_time { 150.0 } 
-              else { 100.0 };
+            perf_score = if exec_time.mul_f32(0.1) > self.avg_exec_time {
+                10.0
+            } else if exec_time.mul_f32(0.25) > self.avg_exec_time {
+                25.0
+            } else if exec_time.mul_f32(0.5) > self.avg_exec_time {
+                50.0
+            } else if exec_time.mul_f32(0.75) > self.avg_exec_time {
+                75.0
+            } else if exec_time.mul(4) < self.avg_exec_time {
+                300.0
+            } else if exec_time.mul(3) < self.avg_exec_time {
+                200.0
+            } else if exec_time.mul(2) < self.avg_exec_time {
+                150.0
+            } else {
+                100.0
+            };
         }
 
         let map_size = meta.list.len() as f64;
         let avg_map_size = self.avg_map_size as f64;
 
-        perf_score = 
-            if map_size * 0.3  > avg_map_size { perf_score * 3.0 }
-        else if map_size * 0.5  > avg_map_size { perf_score * 2.0 }
-        else if map_size * 0.75 > avg_map_size { perf_score * 1.5 }
-        else if map_size * 3.0  < avg_map_size { perf_score * 0.25 }
-        else if map_size * 2.0  < avg_map_size { perf_score * 0.5 }
-        else if map_size * 1.5  < avg_map_size { perf_score * 0.75 }
-        else { perf_score };
-
+        perf_score = if map_size * 0.3 > avg_map_size {
+            perf_score * 3.0
+        } else if map_size * 0.5 > avg_map_size {
+            perf_score * 2.0
+        } else if map_size * 0.75 > avg_map_size {
+            perf_score * 1.5
+        } else if map_size * 3.0 < avg_map_size {
+            perf_score * 0.25
+        } else if map_size * 2.0 < avg_map_size {
+            perf_score * 0.5
+        } else if map_size * 1.5 < avg_map_size {
+            perf_score * 0.75
+        } else {
+            perf_score
+        };
 
         let path_hash = self.hash_testcase(meta);
         let path_count = self.get_paths(path_hash);
 
-        let score = perf_score.floor() as usize * (1 << self.fuzz_level) / (POWER_BETA * path_count);
+        let score =
+            perf_score.floor() as usize * (1 << self.fuzz_level) / (POWER_BETA * path_count);
 
         Ok(score)
     }
@@ -164,7 +179,9 @@ where
         let count = state.corpus().count();
 
         if count == 0 {
-            return Err(Error::IllegalArgument(format!("Must have at least one input in the corpus")));
+            return Err(Error::IllegalArgument(format!(
+                "Must have at least one input in the corpus"
+            )));
         }
 
         let mut total_exec_time = Duration::from_secs(0);
@@ -172,19 +189,21 @@ where
 
         for i in 0..count {
             let testcase = state.corpus().get(i)?.borrow();
-            let exec_duartion =  testcase.exec_time()
-                .ok_or({
-                    Error::KeyNotFound(format!("Testcase #{} has no exec time", i))
-                })?;
+            let exec_duartion = testcase
+                .exec_time()
+                .ok_or({ Error::KeyNotFound(format!("Testcase #{} has no exec time", i)) })?;
 
             total_exec_time += exec_duartion;
             // total_exec_time += exec_duartion.as_micros() as usize;
 
             // map size
-            let meta: &MapIndexesMetadata =
-                testcase.metadata().get::<MapIndexesMetadata>().ok_or_else(|| {
+            let meta: &MapIndexesMetadata = testcase
+                .metadata()
+                .get::<MapIndexesMetadata>()
+                .ok_or_else(|| {
                     Error::KeyNotFound(
-                        "Metadata needed for PowerMutationalStage not found in testcase".to_string(),
+                        "Metadata needed for PowerMutationalStage not found in testcase"
+                            .to_string(),
                     )
                 })?;
 
@@ -193,19 +212,20 @@ where
 
         self.avg_exec_time = total_exec_time.div(count as u32);
         self.avg_map_size = total_map_size / count;
-        
+
         Ok(())
     }
 }
 
-impl<C, E, EM, I, M, R, S, Z, F> Stage<E, EM, S, Z> for PowerMutationalStage<C, E, EM, I, M, R, S, Z, F>
+impl<C, E, EM, I, M, R, S, Z, F> Stage<E, EM, S, Z>
+    for PowerMutationalStage<C, E, EM, I, M, R, S, Z, F>
 where
     C: Corpus<I>,
     M: Mutator<I, S>,
     I: Input,
     R: Rand,
     S: HasClientPerfStats + HasCorpus<C, I> + HasRand<R>,
-    Z: Evaluator<E, EM, I, S>  + HasFeedback<F, I, S>,
+    Z: Evaluator<E, EM, I, S> + HasFeedback<F, I, S>,
     F: Feedback<I, S>,
 {
     fn perform(
@@ -216,7 +236,6 @@ where
         manager: &mut EM,
         corpus_idx: usize,
     ) -> Result<(), Error> {
-
         if self.avg_map_size == 0 && self.avg_exec_time.as_micros() == 0 {
             self.init_avg_stats(&state)?;
         }
@@ -243,19 +262,25 @@ where
             mark_feature_time!(state, PerfFeature::Mutate);
 
             // Time is measured directly the `evaluate_input` function
-            let (_, new_corpus_idx) = fuzzer.evaluate_input(state, executor, manager, input.clone())?;
+            let (_, new_corpus_idx) =
+                fuzzer.evaluate_input(state, executor, manager, input.clone())?;
 
             // if we got an interesting testcase, mark it's path is visited
             // otherwise mark the fathers path as visited as we probably didn't get any new
             // coverage. TODO check this last assumption
             if let Some(idx) = new_corpus_idx {
-                debug!("[+] PowerMutationalStage marking path of testcase {} as visited", idx);
+                debug!(
+                    "[+] PowerMutationalStage marking path of testcase {} as visited",
+                    idx
+                );
                 self.mark_path(&state.corpus().get(idx)?.borrow())?;
             } else {
                 // create a testcase and don't save it anywhere just so we can mark it's coverage
                 // as visited
                 let mut testcase = Testcase::new(input.clone());
-                fuzzer.feedback_mut().append_metadata(state, &mut testcase)?; // add coverage to testcase
+                fuzzer
+                    .feedback_mut()
+                    .append_metadata(state, &mut testcase)?; // add coverage to testcase
                 self.mark_path(&testcase)?;
             }
 
@@ -263,6 +288,9 @@ where
             self.mutator.post_exec(state, i as i32, new_corpus_idx)?;
             mark_feature_time!(state, PerfFeature::MutatePostExec);
         }
+
+        #[cfg(feature = "introspection")]
+        state.introspection_stats_mut().finish_stage();
 
         self.fuzz_level += 1;
 
